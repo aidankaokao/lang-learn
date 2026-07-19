@@ -10,11 +10,13 @@
 """
 
 import os
+import re
 import tempfile
 from pathlib import Path
 
 from sqlalchemy import delete, insert, update
 
+from config import settings
 from db.engine import engine
 from db.tables import transcript_segments, videos
 from services import llm_provider_service
@@ -35,14 +37,26 @@ def _fetch_captions(youtube_id: str) -> list[dict]:
     """回傳 [{text, start, duration}]（秒）。
 
     youtube-transcript-api 0.6.x 與 1.x 的 API 不同，這裡兩種都相容。
+    settings.youtube_proxy 有設就走代理（雲端環境會被 YouTube 擋，見 DEPLOY-CLOUDRUN.md）。
     """
     from youtube_transcript_api import YouTubeTranscriptApi
 
+    proxy = settings.youtube_proxy.strip()
+
     if hasattr(YouTubeTranscriptApi, "get_transcript"):  # 0.6.x：類別方法
-        return YouTubeTranscriptApi.get_transcript(youtube_id, languages=_LANGUAGES)
+        kwargs = {"proxies": {"http": proxy, "https": proxy}} if proxy else {}
+        return YouTubeTranscriptApi.get_transcript(youtube_id, languages=_LANGUAGES, **kwargs)
 
     # 1.x：實例方法，回傳的是物件不是 dict
-    fetched = YouTubeTranscriptApi().fetch(youtube_id, languages=_LANGUAGES)
+    api = YouTubeTranscriptApi()
+    if proxy:
+        from youtube_transcript_api.proxies import GenericProxyConfig
+
+        api = YouTubeTranscriptApi(
+            proxy_config=GenericProxyConfig(http_url=proxy, https_url=proxy)
+        )
+
+    fetched = api.fetch(youtube_id, languages=_LANGUAGES)
     return [{"text": s.text, "start": s.start, "duration": s.duration} for s in fetched]
 
 
@@ -129,6 +143,8 @@ def _download_audio(youtube_id: str, target_dir: str) -> Path:
         "no_warnings": True,
         "noplaylist": True,
     }
+    if settings.youtube_proxy.strip():
+        options["proxy"] = settings.youtube_proxy.strip()
     with yt_dlp.YoutubeDL(options) as ydl:
         info = ydl.extract_info(f"https://www.youtube.com/watch?v={youtube_id}", download=True)
         return Path(ydl.prepare_filename(info))
@@ -209,6 +225,107 @@ def _mark_failed(video_id: int, message: str) -> None:
         )
 
 
+# ── 手動貼上字幕 ────────────────────────────────────────
+# 雲端環境被 YouTube 擋 IP 時的免費解法：使用者自己複製字幕貼進來。
+# 支援三種常見格式：
+#   1. SRT / VTT     00:00:01,000 --> 00:00:04,000
+#   2. YouTube 轉錄稿面板複製的內容   0:05 <換行或空白> 文字
+#   3. 上面兩種的混合（多餘的序號、空行都會被忽略）
+_RANGE_RE = re.compile(
+    r"(\d{1,2}:\d{2}(?::\d{2})?[.,]\d{1,3})\s*-->\s*(\d{1,2}:\d{2}(?::\d{2})?[.,]\d{1,3})"
+)
+_LEADING_TS_RE = re.compile(r"^\[?(\d{1,2}:\d{2}(?::\d{2})?)\]?[\s\]]*(.*)$")
+
+# 沒有結束時間可推算時，用每個字約 350ms 估
+_MS_PER_WORD = 350
+_MIN_DURATION_MS = 1500
+
+
+def _timestamp_to_ms(value: str) -> int:
+    parts = [float(p) for p in value.replace(",", ".").split(":")]
+    while len(parts) < 3:
+        parts.insert(0, 0.0)
+    hours, minutes, seconds = parts
+    return int((hours * 3600 + minutes * 60 + seconds) * 1000)
+
+
+def parse_manual_transcript(raw: str) -> list[dict]:
+    """把貼上的字幕解析成 [{start_ms, end_ms, text}]。解析不出來就丟 ValueError。"""
+    lines = [line.strip() for line in raw.splitlines()]
+    entries: list[dict] = []
+
+    # ── 格式 1：SRT / VTT ──
+    index = 0
+    while index < len(lines):
+        match = _RANGE_RE.search(lines[index])
+        if match:
+            start_ms = _timestamp_to_ms(match.group(1))
+            end_ms = _timestamp_to_ms(match.group(2))
+            index += 1
+            chunk: list[str] = []
+            while index < len(lines) and lines[index] and not _RANGE_RE.search(lines[index]):
+                if not lines[index].isdigit():  # 跳過 SRT 的序號
+                    chunk.append(lines[index])
+                index += 1
+            text = _clean(" ".join(chunk))
+            if text:
+                entries.append({"start_ms": start_ms, "end_ms": max(end_ms, start_ms + 1), "text": text})
+        else:
+            index += 1
+
+    # ── 格式 2：開頭是時間戳的行 ──
+    if not entries:
+        pending_start: int | None = None
+        chunk = []
+        for line in lines:
+            if not line:
+                continue
+            match = _LEADING_TS_RE.match(line)
+            if match and match.group(1):
+                if pending_start is not None and chunk:
+                    entries.append({"start_ms": pending_start, "end_ms": 0, "text": _clean(" ".join(chunk))})
+                pending_start = _timestamp_to_ms(match.group(1))
+                chunk = [match.group(2)] if match.group(2) else []
+            elif pending_start is not None:
+                chunk.append(line)
+        if pending_start is not None and chunk:
+            entries.append({"start_ms": pending_start, "end_ms": 0, "text": _clean(" ".join(chunk))})
+
+        # 結束時間用下一段的開始補；最後一段用字數估
+        for current, following in zip(entries, entries[1:]):
+            current["end_ms"] = following["start_ms"]
+        if entries:
+            last = entries[-1]
+            last["end_ms"] = last["start_ms"] + max(
+                _MIN_DURATION_MS, len(last["text"].split()) * _MS_PER_WORD
+            )
+
+    entries = [e for e in entries if e["text"]]
+    if not entries:
+        raise ValueError(
+            "看不懂這份字幕的格式。請貼上含時間軸的內容，例如 SRT／VTT 檔，"
+            "或 YouTube「顯示轉錄稿」面板複製出來的文字（每段前面要有 0:05 這種時間）。"
+        )
+
+    # 轉成和字幕 API 一樣的形狀，重用既有的合併邏輯
+    fragments = [
+        {
+            "text": e["text"],
+            "start": e["start_ms"] / 1000,
+            "duration": max(0, e["end_ms"] - e["start_ms"]) / 1000,
+        }
+        for e in sorted(entries, key=lambda e: e["start_ms"])
+    ]
+    return _merge_into_sentences(fragments)
+
+
+def ingest_manual(video_id: int, raw: str) -> int:
+    """存入手動貼上的字幕，回傳段落數。"""
+    segments = parse_manual_transcript(raw)
+    _save_segments(video_id, segments, "manual")
+    return len(segments)
+
+
 def ingest(video_id: int, youtube_id: str, user_id: int) -> None:
     """背景工作：抓字幕 → 失敗改 Whisper → 寫入 segments。任何例外都寫回 DB。"""
     try:
@@ -227,7 +344,11 @@ def ingest(video_id: int, youtube_id: str, user_id: int) -> None:
             raise ValueError("Whisper 沒有回傳任何內容")
         _save_segments(video_id, segments, "whisper")
     except Exception as e:
+        hint = ""
+        if "RequestBlocked" in caption_error or "IpBlocked" in caption_error:
+            # 雲端機房 IP 被 YouTube 擋是常態，直接告訴使用者可以怎麼繞過
+            hint = "（雲端主機的 IP 被 YouTube 封鎖了。可以改用下方的「手動貼上字幕」，或設定 YOUTUBE_PROXY）"
         _mark_failed(
             video_id,
-            f"字幕擷取失敗（{caption_error}）；Whisper 轉錄也失敗（{type(e).__name__}: {e}）",
+            f"字幕擷取失敗{hint}：{caption_error}；Whisper 轉錄也失敗（{type(e).__name__}: {e}）",
         )

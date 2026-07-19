@@ -26,6 +26,12 @@ class Settings(BaseSettings):
     # 開放自由註冊；關掉後只有管理員能建帳號
     allow_registration: bool = True
 
+    # ── YouTube 代理 ──
+    # 雲端機房 IP 會被 YouTube 封鎖（字幕 API 與 yt-dlp 都會 RequestBlocked），
+    # 本機開發不需要設。要在雲端自動抓字幕就得掛住宅代理，格式：
+    #   http://使用者:密碼@主機:埠
+    youtube_proxy: str = ""
+
     # ── 加密 ──
     # LLM provider 的 api_key 用 Fernet 加密存 DB。留空則從 jwt_secret 推導，
     # 正式環境請自行產一組固定值（見 backend/.env.example）。

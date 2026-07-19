@@ -17,6 +17,10 @@ class ImportIn(BaseModel):
     url: str = Field(min_length=1, max_length=500)
 
 
+class ManualTranscriptIn(BaseModel):
+    text: str = Field(min_length=1, max_length=500_000)
+
+
 @router.get("")
 def list_videos(user: dict = Depends(get_current_user)):
     return video_service.list_videos(user["id"])
@@ -60,6 +64,26 @@ def retry_transcript(
 
     tasks.add_task(transcript_service.ingest, video["id"], video["youtube_id"], user["id"])
     return video
+
+
+@router.post("/{video_id}/transcript")
+def set_manual_transcript(
+    video_id: int, body: ManualTranscriptIn, user: dict = Depends(get_current_user)
+):
+    """手動貼上字幕（SRT / VTT / YouTube 轉錄稿面板的格式都吃）。
+
+    雲端主機的 IP 常被 YouTube 封鎖，這是不必付費代理也能用的退路。
+    """
+    video = video_service.get_video(user["id"], video_id)
+    if video is None:
+        raise HTTPException(status_code=404, detail="找不到這支影片")
+
+    try:
+        count = transcript_service.ingest_manual(video_id, body.text)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    return {**video_service.get_video(user["id"], video_id), "segment_count": count}
 
 
 @router.delete("/{video_id}", status_code=204)

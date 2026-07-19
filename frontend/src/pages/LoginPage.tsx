@@ -39,7 +39,7 @@ export function LoginPage() {
             <GraduationCap className="h-6 w-6" strokeWidth={1.75} />
           </div>
           <CardTitle className="pt-2 text-2xl">
-            <span className="text-gradient">yt-learn</span>
+            <span className="text-gradient">lang-learn</span>
           </CardTitle>
           <CardDescription>
             {mode === "login" ? "登入開始你的英文聽力訓練" : "建立帳號，開始累積你的片語庫"}

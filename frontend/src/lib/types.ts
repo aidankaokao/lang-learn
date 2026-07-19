@@ -8,7 +8,7 @@ export type Video = {
   thumbnail_url: string | null;
   duration_sec: number | null;
   transcript_status: TranscriptStatus;
-  transcript_source: "caption" | "whisper" | null;
+  transcript_source: "caption" | "whisper" | "manual" | null;
   error_message: string | null;
   created_at: string;
   /** 只有列表 API 會帶 */

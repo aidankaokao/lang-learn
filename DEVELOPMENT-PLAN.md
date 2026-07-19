@@ -214,7 +214,14 @@ Skills（`backend/skills/`，各含 `SKILL.md`）：`phrase-extraction`、`sente
   （否則換 `JWT_SECRET` 會導致已存的 `api_key` 解不開）。
 - 公開部署前建議把 `ALLOW_REGISTRATION` 設成 `false`，改由管理員建帳號。
 - SQLite → PostgreSQL 時需 `pip install "psycopg[binary]"` 並改 `DATABASE_URL`（見 `reference/backend/database.md` §6）。
-- Cloud Run 上 `yt-dlp` 抓 YouTube 可能因機房 IP 被擋，Whisper fallback 屆時需實測。
+- **YouTube 封鎖雲端 IP（已確認）**：部署到 Cloud Run 後，字幕 API 與 yt-dlp 都會回
+  `RequestBlocked`。本機開發正常是因為住宅 IP。三條路：
+  1. **手動貼上字幕**（免費、預設方案）：失敗的影片卡片上有「貼上字幕」，
+     支援 SRT／VTT／YouTube 轉錄稿面板的格式，解析在
+     `transcript_service.parse_manual_transcript()`，來源記為 `manual`。
+  2. **住宅代理**：設 `YOUTUBE_PROXY=http://user:pass@host:port`，
+     字幕 API 與 yt-dlp 都會走它（資料中心代理無效，要住宅的）。
+  3. 不要用 cookies 驗證 —— 套件官方標為 NOT RECOMMENDED，帳號最終會被停用。
 
 ### 字幕時間軸與段落重疊
 YouTube **自動字幕是滾動式的**：相鄰片段時間大幅重疊、文字重複。段落重疊會造成兩個症狀

@@ -81,7 +81,7 @@ export function Sidebar({ collapsed, mobile = false }: { collapsed: boolean; mob
           <GraduationCap className="h-5 w-5" strokeWidth={1.75} />
         </div>
         {!isCollapsed && (
-          <span className="text-gradient truncate text-lg font-bold tracking-tight">yt-learn</span>
+          <span className="text-gradient truncate text-lg font-bold tracking-tight">lang-learn</span>
         )}
       </div>
 

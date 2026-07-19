@@ -39,7 +39,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="yt-learn", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="lang-learn", version="0.1.0", lifespan=lifespan)
 
 # 開發期放寬；正式期前端走 nginx 同源反代，其實不需要 CORS
 app.add_middleware(
