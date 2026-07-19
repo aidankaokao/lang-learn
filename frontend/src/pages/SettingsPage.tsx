@@ -391,7 +391,7 @@ function VoiceCard() {
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-wrap items-end gap-3">
-        <div className="min-w-[14rem] flex-1 space-y-1.5">
+        <div className="min-w-0 flex-1 space-y-1.5 sm:min-w-[14rem]">
           <Label>語音</Label>
           <Select value={selected} onChange={(e) => pick(e.target.value)}>
             {voices.map((v) => (

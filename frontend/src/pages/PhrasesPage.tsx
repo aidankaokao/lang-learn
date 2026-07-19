@@ -292,7 +292,7 @@ function PracticeBox({ phrase }: { phrase: Phrase }) {
 
       <div className="flex flex-wrap items-center gap-2">
         <Input
-          className="min-w-[14rem] flex-1"
+          className="min-w-0 flex-1 sm:min-w-[14rem]"
           value={sentence}
           onChange={(e) => setSentence(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && sentence && !grading && void submit()}

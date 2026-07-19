@@ -94,7 +94,7 @@ export function VideosPage() {
         </CardHeader>
         <CardContent className="flex flex-wrap items-center gap-3">
           <Input
-            className="min-w-[16rem] flex-1"
+            className="min-w-0 flex-1 sm:min-w-[16rem]"
             value={url}
             onChange={(e) => setUrl(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && url && !importing && void importVideo()}

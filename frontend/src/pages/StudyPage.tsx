@@ -484,7 +484,8 @@ export function StudyPage() {
         </div>
 
         {/* ── 右：文字稿 ── */}
-        <Card className="animate-fade-up flex h-[calc(100vh-10rem)] flex-col lg:sticky lg:top-0">
+        {/* 手機上文字稿在播放器下方，給固定高度就好；桌機才貼齊視窗高度並固定 */}
+        <Card className="animate-fade-up flex h-[60vh] flex-col lg:sticky lg:top-0 lg:h-[calc(100vh-10rem)]">
           <CardHeader className="flex-row items-center justify-between space-y-0">
             <CardTitle className="flex items-center gap-2">
               <ScrollText className="h-5 w-5 text-primary" strokeWidth={1.75} />

@@ -138,7 +138,7 @@ export function ClipsPage() {
       {playing && (
         <Card className="animate-fade-up sticky top-0 z-10">
           <CardContent className="flex items-center gap-4 p-4">
-            <div className="aspect-video w-32 shrink-0 overflow-hidden rounded-xl bg-black/80">
+            <div className="aspect-video w-24 shrink-0 overflow-hidden rounded-xl bg-black/80 sm:w-32">
               <div ref={player.containerRef} className="h-full w-full" />
             </div>
             <div className="min-w-0 flex-1">
@@ -153,7 +153,7 @@ export function ClipsPage() {
               </div>
               <p className="truncate pt-1 text-sm">{playing.text}</p>
             </div>
-            <Button variant="secondary" size="sm" onClick={() => setPlaying(null)}>
+            <Button variant="secondary" size="sm" className="shrink-0" onClick={() => setPlaying(null)}>
               <Square strokeWidth={1.75} />
               停止
             </Button>

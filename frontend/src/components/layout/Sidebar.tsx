@@ -39,10 +39,16 @@ const SECTIONS: { title: string; items: NavItem[] }[] = [
   },
 ];
 
-export function Sidebar({ collapsed }: { collapsed: boolean }) {
+/**
+ * mobile=true 時是手機版抽屜：固定寬度、不可折疊、不可拖曳。
+ * 桌機版才有折疊與拖曳調寬。
+ */
+export function Sidebar({ collapsed, mobile = false }: { collapsed: boolean; mobile?: boolean }) {
   const role = useAuth((s) => s.user?.role);
   const [width, setWidth] = useState(() => Number(localStorage.getItem(WIDTH_KEY)) || 240);
   const dragging = useRef(false);
+
+  const isCollapsed = collapsed && !mobile;
 
   // 拖曳改寬度：監聽掛在 window，滑鼠移出感應區也不會斷
   useEffect(() => {
@@ -66,15 +72,15 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
 
   return (
     <aside
-      className="glass relative flex shrink-0 flex-col border-r transition-[width] duration-200"
-      style={{ width: collapsed ? COLLAPSED_W : width }}
+      className="glass relative flex h-full shrink-0 flex-col border-r transition-[width] duration-200"
+      style={{ width: mobile ? 264 : isCollapsed ? COLLAPSED_W : width }}
     >
       {/* 品牌區 */}
       <div className="flex h-14 items-center gap-3 px-4">
         <div className="bg-brand-gradient flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-white">
           <GraduationCap className="h-5 w-5" strokeWidth={1.75} />
         </div>
-        {!collapsed && (
+        {!isCollapsed && (
           <span className="text-gradient truncate text-lg font-bold tracking-tight">yt-learn</span>
         )}
       </div>
@@ -85,7 +91,7 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
           if (items.length === 0) return null;
           return (
             <div key={section.title} className="space-y-1">
-              {!collapsed && (
+              {!isCollapsed && (
                 <p className="px-3 pb-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                   {section.title}
                 </p>
@@ -95,11 +101,11 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
                   key={to}
                   to={to}
                   end={to === "/"}
-                  title={collapsed ? label : undefined}
+                  title={isCollapsed ? label : undefined}
                   className={({ isActive }) =>
                     cn(
                       "flex items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium transition-colors",
-                      collapsed && "justify-center px-0",
+                      isCollapsed && "justify-center px-0",
                       isActive
                         ? "bg-white text-primary shadow-sm"
                         : "text-muted-foreground hover:bg-white/50",
@@ -107,7 +113,7 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
                   }
                 >
                   <Icon className="h-[18px] w-[18px] shrink-0" strokeWidth={1.75} />
-                  {!collapsed && <span className="truncate">{label}</span>}
+                  {!isCollapsed && <span className="truncate">{label}</span>}
                 </NavLink>
               ))}
             </div>
@@ -115,8 +121,8 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
         })}
       </nav>
 
-      {/* 拖曳感應區：隱形直條，hover / 拖曳中才顯色 */}
-      {!collapsed && (
+      {/* 拖曳感應區：隱形直條，hover / 拖曳中才顯色（手機沒有滑鼠，不提供） */}
+      {!isCollapsed && !mobile && (
         <div
           onMouseDown={() => {
             dragging.current = true;
