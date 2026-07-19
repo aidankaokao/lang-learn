@@ -1,0 +1,35 @@
+# yt-learn 後端依賴。Python 固定 3.11（容器基底 python:3.11-slim）。
+# 對應說明見 reference/backend/backend-conventions.md §6。
+
+fastapi>=0.110
+uvicorn[standard]>=0.29
+pydantic>=2.6
+pydantic-settings>=2.2
+
+# ── 資料庫（SQLAlchemy Core，見 database.md）──
+sqlalchemy>=2.0
+psycopg[binary]>=3.1       # PostgreSQL 驅動（Cloud Run 用；本機 SQLite 裝著也無妨）
+# alembic>=1.13            # 需要遷移管理時
+
+# ── 帳號 / 安全 ──
+passlib[bcrypt]>=1.7.4
+bcrypt>=4.0,<4.1           # passlib 1.7.4 與 bcrypt 4.1+ 不相容，先鎖版
+python-jose[cryptography]>=3.3
+cryptography>=42.0         # LLM provider api_key 加密存放（Fernet）
+
+# ── AI Agent（見 langgraph-agent.md）──
+langgraph>=0.2
+langchain-core>=0.3
+
+# ── LLM 串接（見 llm-integration.md）──
+langchain-openai>=0.2      # ChatOpenAI（外部 OpenAI / 本地 vLLM）
+langchain-ollama>=0.2      # ChatOllama（本地 Ollama）
+
+# ── 影片 / 文字稿擷取（階段 3）──
+youtube-transcript-api>=0.6
+yt-dlp>=2024.1             # 無字幕時抽音訊給 Whisper API
+openai>=1.12               # Whisper API fallback（whisper-1）
+
+# ── 文字轉語音（片語朗讀）──
+# 開源 MIT、免金鑰，取用微軟 Edge 的朗讀服務，可用 en-GB Neural 語音
+edge-tts>=6.1

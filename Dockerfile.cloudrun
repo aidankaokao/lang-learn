@@ -1,0 +1,40 @@
+# Cloud Run 用的單一 image：前端 build 成靜態檔，直接由 FastAPI 伺服。
+# build context 為專案根目錄。
+#
+# 為什麼不照 docker-compose 那樣分成 nginx + backend 兩個容器：
+# Cloud Run 一個服務對外只有一個網址，兩個服務之間要用 nginx 反代到 *.run.app
+# 會牽扯 resolver 與 TLS，複雜且多一份費用。單一服務同源、免 CORS、最便宜。
+#
+# 內網 docker-compose 部署仍走 Dockerfile.backend + Dockerfile.frontend（不受影響）。
+
+FROM node:18-alpine AS frontend
+
+WORKDIR /app
+COPY frontend/package.json frontend/package-lock.json* ./
+RUN npm install --legacy-peer-deps
+
+COPY frontend/ .
+# Cloud Run 掛在網域根，所以 base path 是 /（不用 APP_ROUTE）
+ENV VITE_BASE_PATH=/
+RUN npm run build
+
+
+FROM python:3.11-slim
+
+WORKDIR /app
+
+COPY backend/requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.txt
+
+COPY backend/ /app/backend/
+# api.py 偵測到 backend/static 存在就會伺服前端（見 api.py 底部）
+COPY --from=frontend /app/dist /app/backend/static
+
+RUN mkdir -p /app/backend/data
+
+WORKDIR /app/backend
+
+# Cloud Run 部署時把「容器連接埠」設成 8000（api.py 寫死 8000）
+EXPOSE 8000
+
+CMD ["python", "api.py"]

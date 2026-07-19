@@ -1,0 +1,149 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Aurora Glass 極光琉璃（frontend-style-aurora-glass.md §2~§4、§11）
+   顏色全走 CSS 變數，元件只引用語意名稱，不寫死 hex。 */
+
+@layer base {
+  :root {
+    --background: 200 60% 98%;
+    --foreground: 222 30% 18%;
+    --card: 210 40% 100%;
+    --card-foreground: 222 30% 18%;
+    --popover: 210 40% 100%;
+    --popover-foreground: 222 30% 18%;
+    --primary: 244 68% 62%;
+    --primary-foreground: 210 40% 99%;
+    --secondary: 180 45% 92%;
+    --secondary-foreground: 200 40% 22%;
+    --muted: 210 30% 94%;
+    --muted-foreground: 215 18% 46%;
+    --accent: 172 66% 80%;
+    --accent-foreground: 200 45% 20%;
+    --destructive: 0 72% 58%;
+    --destructive-foreground: 210 40% 99%;
+    --border: 214 32% 88%;
+    --input: 214 32% 88%;
+    --ring: 244 68% 62%;
+    --radius: 1rem;
+
+    /* 品牌漸層（核心識別）*/
+    --brand-from: #14b8a6;
+    --brand-to: #6366f1;
+
+    /* 背景光暈 blob */
+    --glow-1: 172 70% 60%;
+    --glow-2: 244 80% 72%;
+    --glow-3: 205 90% 72%;
+
+    /* body 三層背景 */
+    --bg-a: 180 80% 92%;
+    --bg-b: 250 90% 94%;
+    --bg-c: 205 60% 98%;
+    --bg-d: 230 55% 96%;
+  }
+
+  /* ── 主題盤（§11）：只覆寫這幾個變數，玻璃結構不變 ── */
+  [data-theme="sunset-coral"] {
+    --primary: 16 90% 62%; --ring: 16 90% 62%; --accent: 32 90% 82%;
+    --brand-from: #fb7185; --brand-to: #f59e0b;
+    --glow-1: 16 90% 72%; --glow-2: 32 90% 72%; --glow-3: 350 90% 78%;
+    --bg-a: 16 90% 94%; --bg-b: 32 90% 94%; --bg-c: 20 60% 98%; --bg-d: 350 55% 97%;
+  }
+  [data-theme="rose-quartz"] {
+    --primary: 292 70% 58%; --ring: 292 70% 58%; --accent: 320 80% 88%;
+    --brand-from: #f472b6; --brand-to: #a855f7;
+    --glow-1: 330 85% 76%; --glow-2: 280 80% 76%; --glow-3: 300 80% 82%;
+    --bg-a: 330 85% 95%; --bg-b: 280 80% 95%; --bg-c: 320 55% 98%; --bg-d: 290 50% 97%;
+  }
+  [data-theme="mint-meadow"] {
+    --primary: 173 75% 40%; --ring: 173 75% 40%; --accent: 160 70% 84%;
+    --brand-from: #34d399; --brand-to: #06b6d4;
+    --glow-1: 160 75% 68%; --glow-2: 188 85% 68%; --glow-3: 174 70% 74%;
+    --bg-a: 160 75% 93%; --bg-b: 188 85% 93%; --bg-c: 170 55% 98%; --bg-d: 190 50% 97%;
+  }
+  [data-theme="lavender-mist"] {
+    --primary: 258 80% 68%; --ring: 258 80% 68%; --accent: 270 80% 88%;
+    --brand-from: #818cf8; --brand-to: #c084fc;
+    --glow-1: 240 85% 76%; --glow-2: 275 85% 78%; --glow-3: 258 80% 80%;
+    --bg-a: 240 85% 95%; --bg-b: 275 85% 95%; --bg-c: 250 55% 98%; --bg-d: 265 50% 97%;
+  }
+  [data-theme="ocean-deep"] {
+    --primary: 217 90% 58%; --ring: 217 90% 58%; --accent: 190 85% 84%;
+    --brand-from: #3b82f6; --brand-to: #22d3ee;
+    --glow-1: 217 90% 72%; --glow-2: 188 90% 70%; --glow-3: 203 90% 76%;
+    --bg-a: 217 90% 94%; --bg-b: 188 90% 93%; --bg-c: 205 60% 98%; --bg-d: 215 55% 97%;
+  }
+  [data-theme="golden-hour"] {
+    --primary: 32 92% 52%; --ring: 32 92% 52%; --accent: 40 95% 82%;
+    --brand-from: #fbbf24; --brand-to: #fb7185;
+    --glow-1: 43 95% 72%; --glow-2: 350 90% 78%; --glow-3: 25 92% 76%;
+    --bg-a: 43 95% 94%; --bg-b: 350 90% 95%; --bg-c: 35 60% 98%; --bg-d: 10 55% 97%;
+  }
+  [data-theme="graphite-frost"] {
+    --primary: 215 20% 45%; --ring: 215 20% 45%; --accent: 213 25% 86%;
+    --brand-from: #64748b; --brand-to: #94a3b8;
+    --glow-1: 215 25% 70%; --glow-2: 213 20% 74%; --glow-3: 220 22% 76%;
+    --bg-a: 215 25% 94%; --bg-b: 213 20% 95%; --bg-c: 214 30% 98%; --bg-d: 220 22% 97%;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply text-foreground;
+    background:
+      radial-gradient(1200px 800px at 10% -10%, hsl(var(--bg-a)) 0%, transparent 55%),
+      radial-gradient(1000px 700px at 100% 0%, hsl(var(--bg-b)) 0%, transparent 55%),
+      linear-gradient(180deg, hsl(var(--bg-c)) 0%, hsl(var(--bg-d)) 100%);
+    background-attachment: fixed;
+    -webkit-font-smoothing: antialiased;
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+      "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
+  }
+}
+
+@layer components {
+  .glass {
+    @apply border border-white/40 bg-white/55 backdrop-blur-xl;
+    box-shadow:
+      0 8px 32px -8px hsl(220 40% 40% / 0.18),
+      inset 0 1px 0 0 hsl(0 0% 100% / 0.6);
+  }
+  .glass-soft {
+    @apply border border-white/30 bg-white/35 backdrop-blur-md;
+    box-shadow: inset 0 1px 0 0 hsl(0 0% 100% / 0.5);
+  }
+  .glass-strong {
+    @apply border border-white/50 bg-white/70 backdrop-blur-2xl;
+    box-shadow:
+      0 12px 40px -8px hsl(220 40% 40% / 0.24),
+      inset 0 1px 0 0 hsl(0 0% 100% / 0.7);
+  }
+
+  .bg-brand-gradient {
+    background-image: linear-gradient(to bottom right, var(--brand-from), var(--brand-to));
+  }
+  .bg-brand-tint {
+    background-image: linear-gradient(
+      to bottom right,
+      color-mix(in srgb, var(--brand-from) 12%, transparent),
+      color-mix(in srgb, var(--brand-to) 12%, transparent)
+    );
+  }
+  .text-gradient {
+    background-image: linear-gradient(120deg, var(--brand-from), var(--brand-to));
+    @apply bg-clip-text text-transparent;
+  }
+
+  .nice-scroll::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .nice-scroll::-webkit-scrollbar-thumb {
+    background: hsl(var(--muted-foreground) / 0.25);
+    border-radius: 3px;
+  }
+}
