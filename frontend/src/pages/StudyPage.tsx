@@ -54,6 +54,7 @@ export function StudyPage() {
   const [extracting, setExtracting] = useState(false);
   const [savedPhrases, setSavedPhrases] = useState<Set<string>>(new Set());
   const [savingPhrase, setSavingPhrase] = useState<string | null>(null);
+  const [resegmenting, setResegmenting] = useState(false);
 
   const player = useYouTubePlayer(video?.youtube_id);
   const { currentMs, seek, play, pause, playing, setRate } = player;
@@ -188,6 +189,27 @@ export function StudyPage() {
       toast.error((e as Error).message);
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function resegment() {
+    if (
+      !window.confirm(
+        "讓 AI 補上標點並重新斷句？\n" +
+          "已存的例句與片語不受影響，但文字稿的分段會整份換掉。",
+      )
+    )
+      return;
+
+    setResegmenting(true);
+    try {
+      await api.post(`/videos/${id}/resegment`);
+      setSegments(await api.get<Segment[]>(`/videos/${id}/segments`));
+      toast.success("已重新斷句");
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setResegmenting(false);
     }
   }
 
@@ -491,14 +513,30 @@ export function StudyPage() {
               <ScrollText className="h-5 w-5 text-primary" strokeWidth={1.75} />
               文字稿
             </CardTitle>
-            <Button
-              variant={autoScroll ? "secondary" : "ghost"}
-              size="sm"
-              onClick={() => setAutoScroll((v) => !v)}
-              title="自動捲動到目前播放的句子"
-            >
-              自動捲動{autoScroll ? "開" : "關"}
-            </Button>
+            <div className="flex items-center gap-1">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={resegment}
+                disabled={resegmenting}
+                title="自動字幕沒有標點，讓 AI 補標點並重組成完整句子"
+              >
+                {resegmenting ? (
+                  <Loader2 className="animate-spin" strokeWidth={1.75} />
+                ) : (
+                  <Sparkles strokeWidth={1.75} />
+                )}
+                重新斷句
+              </Button>
+              <Button
+                variant={autoScroll ? "secondary" : "ghost"}
+                size="sm"
+                onClick={() => setAutoScroll((v) => !v)}
+                title="自動捲動到目前播放的句子"
+              >
+                自動捲動{autoScroll ? "開" : "關"}
+              </Button>
+            </div>
           </CardHeader>
 
           {/* 字幕時間軸與語音真的對不齊時才用（先試「重試」重抓文字稿） */}

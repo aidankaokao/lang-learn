@@ -28,6 +28,18 @@ class PhraseExplanation(BaseModel):
     paraphrases: list[str] = Field(default_factory=list, description="3 個英文的換句話說")
 
 
+class SentenceGroup(BaseModel):
+    """把數個文字稿段落合併成一個完整句子。"""
+
+    start_index: int = Field(description="這句涵蓋的第一個段落編號")
+    end_index: int = Field(description="這句涵蓋的最後一個段落編號（含）")
+    text: str = Field(description="補上標點與大小寫後的完整句子")
+
+
+class SentenceGroups(BaseModel):
+    groups: list[SentenceGroup] = Field(default_factory=list)
+
+
 class SentenceGrading(BaseModel):
     """造樣造句的批改結果。"""
 

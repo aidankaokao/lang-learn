@@ -86,6 +86,18 @@ def set_manual_transcript(
     return {**video_service.get_video(user["id"], video_id), "segment_count": count}
 
 
+@router.post("/{video_id}/resegment")
+def resegment(video_id: int, user: dict = Depends(get_current_user)):
+    """用 LLM 補標點並重新斷句（自動字幕沒有標點，斷句常常怪怪的）。"""
+    if video_service.get_video(user["id"], video_id) is None:
+        raise HTTPException(status_code=404, detail="找不到這支影片")
+    try:
+        count = transcript_service.resegment_with_llm(user["id"], video_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"segment_count": count}
+
+
 @router.delete("/{video_id}", status_code=204)
 def delete_video(video_id: int, user: dict = Depends(get_current_user)):
     try:

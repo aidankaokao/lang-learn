@@ -110,7 +110,10 @@ export function VideosPage() {
         <CardHeader>
           <CardTitle>加入影片</CardTitle>
           <CardDescription>
-            會先抓 YouTube 英文字幕；沒有字幕才用 Whisper 轉錄（需要啟用 OpenAI provider）。
+            會先自動抓 YouTube 英文字幕，沒有字幕才用 Whisper 轉錄。
+            <br />
+            若顯示<b>擷取失敗</b>（雲端主機的 IP 常被 YouTube 封鎖），
+            可以用卡片上的<b>「貼上字幕」</b>自己把轉錄稿貼進來，後續功能完全一樣。
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-wrap items-center gap-3">
@@ -225,12 +228,35 @@ export function VideosPage() {
               {pastingFor === v.id && (
                 <CardContent className="space-y-3 border-t border-white/40 pt-4">
                   <div className="flex items-start justify-between gap-3">
-                    <div className="space-y-1 text-sm">
+                    <div className="min-w-0 space-y-2 text-sm">
                       <p className="font-medium">手動貼上字幕</p>
+                      <ol className="space-y-1 text-xs text-muted-foreground">
+                        <li className="flex gap-2">
+                          <span className="bg-brand-gradient mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full" />
+                          <span>
+                            另開分頁到這支 YouTube 影片
+                            <a
+                              href={`https://www.youtube.com/watch?v=${v.youtube_id}`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="px-1 text-primary underline-offset-4 hover:underline"
+                            >
+                              （點這裡開啟）
+                            </a>
+                          </span>
+                        </li>
+                        <li className="flex gap-2">
+                          <span className="bg-brand-gradient mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full" />
+                          <span>影片說明欄下方點「⋯更多」→「顯示轉錄稿」</span>
+                        </li>
+                        <li className="flex gap-2">
+                          <span className="bg-brand-gradient mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full" />
+                          <span>全選轉錄稿面板的內容，複製後貼到下面的框</span>
+                        </li>
+                      </ol>
                       <p className="text-xs text-muted-foreground">
-                        到 YouTube 影片頁 →「⋯更多」→「顯示轉錄稿」，把整份文字複製貼進來。
-                        SRT / VTT 檔的內容也可以。<b>必須包含時間</b>（像 <code>0:05</code> 那樣），
-                        否則無法做 AB 擷取。
+                        SRT / VTT 檔的內容也可以。<b>內容必須含時間</b>（像 <code>0:05</code>），
+                        沒有時間軸就無法做 AB 擷取與聽寫。
                       </p>
                     </div>
                     <Button variant="ghost" size="icon" onClick={() => setPastingFor(null)} title="取消">

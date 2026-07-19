@@ -28,8 +28,13 @@ _LANGUAGES = ["en", "en-US", "en-GB", "en-CA", "en-AU"]
 _WHISPER_MAX_BYTES = 25 * 1024 * 1024
 
 # 合併字幕片段時的上限：超過就斷句，避免整段黏成一大塊
-_MAX_SEGMENT_MS = 12_000
-_MAX_SEGMENT_CHARS = 220
+_MAX_SEGMENT_MS = 8_000
+_MAX_SEGMENT_CHARS = 160
+
+# 說話停頓多久算一句話結束。
+# 自動字幕沒有標點，只靠上限硬切一定會切在句子中間；
+# 停頓是唯一免費又可靠的句界線索。
+_PAUSE_MS = 700
 
 
 # ── 字幕 ────────────────────────────────────────────────
@@ -115,7 +120,7 @@ def _merge_into_sentences(raw: list[dict]) -> list[dict]:
         )
         buf_text, buf_start, buf_end = [], None, 0.0
 
-    for fragment in fragments:
+    for index, fragment in enumerate(fragments):
         if buf_start is None:
             buf_start = fragment["start"]
         buf_text.append(fragment["text"])
@@ -124,7 +129,12 @@ def _merge_into_sentences(raw: list[dict]) -> list[dict]:
         joined_len = sum(len(t) + 1 for t in buf_text)
         ends_sentence = fragment["text"].endswith((".", "?", "!", "…"))
         too_long = (buf_end - buf_start) * 1000 >= _MAX_SEGMENT_MS or joined_len >= _MAX_SEGMENT_CHARS
-        if ends_sentence or too_long:
+
+        # 和下一段之間有明顯停頓 → 當成句子結束
+        following = fragments[index + 1] if index + 1 < len(fragments) else None
+        pause = following is not None and (following["start"] - buf_end) * 1000 >= _PAUSE_MS
+
+        if ends_sentence or pause or too_long:
             flush()
 
     flush()
@@ -326,6 +336,95 @@ def ingest_manual(video_id: int, raw: str) -> int:
     return len(segments)
 
 
+# ── AI 重新斷句 ─────────────────────────────────────────
+# 自動字幕沒有標點，靠停頓與長度上限切出來的句子常常怪怪的。
+# 這裡請 LLM 補標點並重組成完整句子，時間軸沿用被合併段落的頭尾，所以不會跑掉。
+_RESEGMENT_SYSTEM = """你會拿到一份英文影片的逐段文字稿，每段前面有編號。
+這是自動語音辨識的產物，沒有標點、大小寫也不正確。
+
+請把它重組成完整的句子：
+- 合併相鄰的段落，讓每一組剛好是一個完整句子（或語意完整的子句）。
+- 補上正確的標點與大小寫。
+- **不可以改動、增加或刪除任何單字**，只能加標點與調整大小寫。
+- 每一組用 start_index / end_index 標出它涵蓋哪幾段（含頭含尾）。
+- 所有段落都必須被涵蓋到，不能跳號、不能重疊，且要照順序。"""
+
+# 一次送給 LLM 的段落數上限（太多會超出 context 也容易漏號）
+_RESEGMENT_BATCH = 60
+
+
+def _resegment_batch(llm, segments: list[dict], offset: int) -> list[dict]:
+    """回傳 [{start_ms, end_ms, text}]；LLM 回得不完整就退回原樣。"""
+    listing = "\n".join(f"{i}. {s['text']}" for i, s in enumerate(segments))
+    result = llm.invoke([("system", _RESEGMENT_SYSTEM), ("human", listing)])
+
+    merged: list[dict] = []
+    covered = 0
+    for group in result.groups:
+        start = max(0, min(group.start_index, len(segments) - 1))
+        end = max(start, min(group.end_index, len(segments) - 1))
+        text = group.text.strip()
+        if not text:
+            continue
+        merged.append(
+            {
+                "start_ms": segments[start]["start_ms"],
+                "end_ms": segments[end]["end_ms"],
+                "text": text,
+            }
+        )
+        covered += end - start + 1
+
+    # 涵蓋率太低代表模型漏了一大段，寧可不換
+    if not merged or covered < len(segments) * 0.8:
+        print(f"[resegment] 第 {offset} 批涵蓋率不足（{covered}/{len(segments)}），保留原斷句")
+        return segments
+    return merged
+
+
+def resegment_with_llm(user_id: int, video_id: int) -> int:
+    """用 LLM 重新斷句，回傳新的段落數。"""
+    from sqlalchemy import select as _select
+
+    from agents.schemas import SentenceGroups
+    from db.tables import phrases
+    from llm import get_chat_model
+
+    with engine.connect() as conn:
+        rows = conn.execute(
+            _select(transcript_segments)
+            .where(transcript_segments.c.video_id == video_id)
+            .order_by(transcript_segments.c.idx)
+        )
+        segments = [dict(r._mapping) for r in rows]
+
+    if not segments:
+        raise ValueError("這支影片還沒有文字稿")
+
+    llm = get_chat_model(user_id).with_structured_output(SentenceGroups)
+
+    rebuilt: list[dict] = []
+    for offset in range(0, len(segments), _RESEGMENT_BATCH):
+        batch = segments[offset : offset + _RESEGMENT_BATCH]
+        rebuilt.extend(_resegment_batch(llm, batch, offset))
+
+    with engine.begin() as conn:
+        # 段落要重建，已收藏片語指向的舊 segment_id 會失效，先解除關聯
+        conn.execute(
+            update(phrases).where(phrases.c.video_id == video_id).values(segment_id=None)
+        )
+
+    source = "manual"
+    with engine.connect() as conn:
+        current = conn.execute(
+            _select(videos.c.transcript_source).where(videos.c.id == video_id)
+        ).scalar()
+        source = current or source
+
+    _save_segments(video_id, rebuilt, source)
+    return len(rebuilt)
+
+
 def ingest(video_id: int, youtube_id: str, user_id: int) -> None:
     """背景工作：抓字幕 → 失敗改 Whisper → 寫入 segments。任何例外都寫回 DB。"""
     try:
@@ -346,9 +445,13 @@ def ingest(video_id: int, youtube_id: str, user_id: int) -> None:
     except Exception as e:
         hint = ""
         if "RequestBlocked" in caption_error or "IpBlocked" in caption_error:
-            # 雲端機房 IP 被 YouTube 擋是常態，直接告訴使用者可以怎麼繞過
-            hint = "（雲端主機的 IP 被 YouTube 封鎖了。可以改用下方的「手動貼上字幕」，或設定 YOUTUBE_PROXY）"
-        _mark_failed(
-            video_id,
-            f"字幕擷取失敗{hint}：{caption_error}；Whisper 轉錄也失敗（{type(e).__name__}: {e}）",
-        )
+            # 雲端機房 IP 被 YouTube 擋是常態，直接告訴使用者按哪顆按鈕繞過
+            hint = "：這台主機的 IP 被 YouTube 封鎖了，請改用「貼上字幕」自己把轉錄稿貼進來"
+        if hint:
+            # IP 被擋時 Whisper 也一定失敗（同一個來源），細節對使用者沒有幫助
+            _mark_failed(video_id, f"字幕擷取失敗{hint}。")
+        else:
+            _mark_failed(
+                video_id,
+                f"字幕擷取失敗（{caption_error}）；Whisper 轉錄也失敗（{type(e).__name__}: {e}）",
+            )
