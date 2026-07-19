@@ -1,4 +1,4 @@
-export type TranscriptStatus = "pending" | "ready" | "failed";
+export type TranscriptStatus = "pending" | "ready";
 
 export type Video = {
   id: number;
@@ -7,13 +7,9 @@ export type Video = {
   channel: string | null;
   thumbnail_url: string | null;
   duration_sec: number | null;
+  /** pending = 還沒貼字幕；ready = 可以開始學習 */
   transcript_status: TranscriptStatus;
-  transcript_source: "caption" | "whisper" | "manual" | null;
-  error_message: string | null;
   created_at: string;
-  /** 只有列表 API 會帶 */
-  segment_count?: number;
-  clip_count?: number;
 };
 
 export type Segment = {

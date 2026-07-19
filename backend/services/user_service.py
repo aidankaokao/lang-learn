@@ -15,6 +15,7 @@ from db.tables import (
     llm_providers,
     phrase_practices,
     phrases,
+    transcript_fragments,
     transcript_segments,
     users,
     videos,
@@ -150,6 +151,11 @@ def delete_user(user_id: int) -> None:
             conn.execute(
                 delete(transcript_segments).where(
                     transcript_segments.c.video_id.in_(video_ids)
+                )
+            )
+            conn.execute(
+                delete(transcript_fragments).where(
+                    transcript_fragments.c.video_id.in_(video_ids)
                 )
             )
         conn.execute(delete(videos).where(videos.c.user_id == user_id))

@@ -72,12 +72,26 @@ videos = Table(
     Column("channel", String(255), nullable=True),
     Column("duration_sec", Integer, nullable=True),
     Column("thumbnail_url", String(500), nullable=True),
-    # pending | ready | failed
+    # pending = 還沒貼字幕；ready = 可以開始學習
     Column("transcript_status", String(16), nullable=False, server_default="pending"),
-    Column("transcript_source", String(16), nullable=True),  # caption | whisper
+    Column("transcript_source", String(16), nullable=True),  # 目前只有 manual
     Column("error_message", Text, nullable=True),
     Column("created_at", DateTime(timezone=True), server_default=func.now()),
     UniqueConstraint("user_id", "youtube_id", name="uq_videos_user_youtube"),
+)
+
+# 原始的細碎字幕片段（2~5 秒一段）。
+# transcript_segments 是「合併後給人看、給 AB 擷取用」的單位，會被重新斷句覆寫；
+# 這張表保留最初的時間解析度，重新斷句時才有辦法推算每個字的時間點。
+transcript_fragments = Table(
+    "transcript_fragments",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("video_id", Integer, ForeignKey("videos.id"), nullable=False),
+    Column("idx", Integer, nullable=False),
+    Column("start_ms", Integer, nullable=False),
+    Column("end_ms", Integer, nullable=False),
+    Column("text", Text, nullable=False),
 )
 
 transcript_segments = Table(

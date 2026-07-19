@@ -1,68 +1,30 @@
-"""文字稿擷取：YouTube 英文字幕優先，抓不到才用 Whisper API 轉錄。
+"""文字稿：使用者手動貼上，加上 AI 重新斷句。
 
-流程（背景執行，狀態寫回 videos.transcript_status）：
-  1. youtube-transcript-api 抓英文字幕（含自動字幕）→ source="caption"
-  2. 失敗 → yt-dlp 下載音訊 → OpenAI whisper-1 轉錄 → source="whisper"
-  3. 兩者都失敗 → status="failed"，錯誤訊息寫進 videos.error_message
+**沒有自動擷取**。YouTube 封鎖所有雲端供應商的 IP，部署在 Cloud Run 上時
+字幕 API 與 yt-dlp 一律回 RequestBlocked，留著那條路只會製造一定會失敗的按鈕。
+改成使用者從 YouTube 的「顯示轉錄稿」複製貼上（見 parse_manual_transcript）。
 
-字幕原始片段很碎（2~5 秒一段），這裡會合併成接近句子的單位，
-讓 AB 擷取與逐句對照好用得多（見 _merge_into_sentences）。
+兩層資料：
+  transcript_fragments  最初的細碎片段（2~5 秒），保留時間解析度
+  transcript_segments   合併後給人看、給 AB 擷取用的段落
+重新斷句時要靠 fragments 推算字級時間，所以兩層都要存。
 """
 
-import os
 import re
-import tempfile
-from pathlib import Path
 
-from sqlalchemy import delete, insert, update
+from sqlalchemy import delete, insert, select, update
 
-from config import settings
 from db.engine import engine
-from db.tables import transcript_segments, videos
-from services import llm_provider_service
+from db.tables import transcript_fragments, transcript_segments, videos
 
-# 優先順序：手動英文字幕 > 各地區英文 > 自動英文
-_LANGUAGES = ["en", "en-US", "en-GB", "en-CA", "en-AU"]
-
-# Whisper API 單檔上限 25MB
-_WHISPER_MAX_BYTES = 25 * 1024 * 1024
-
-# 合併字幕片段時的上限：超過就斷句，避免整段黏成一大塊
+# 合併片段時的上限：超過就斷句，避免整段黏成一大塊
 _MAX_SEGMENT_MS = 8_000
 _MAX_SEGMENT_CHARS = 160
 
 # 說話停頓多久算一句話結束。
-# 自動字幕沒有標點，只靠上限硬切一定會切在句子中間；
+# 自動字幕沒有標點，只靠長度上限硬切一定會切在句子中間；
 # 停頓是唯一免費又可靠的句界線索。
 _PAUSE_MS = 700
-
-
-# ── 字幕 ────────────────────────────────────────────────
-def _fetch_captions(youtube_id: str) -> list[dict]:
-    """回傳 [{text, start, duration}]（秒）。
-
-    youtube-transcript-api 0.6.x 與 1.x 的 API 不同，這裡兩種都相容。
-    settings.youtube_proxy 有設就走代理（雲端環境會被 YouTube 擋，見 DEPLOY-CLOUDRUN.md）。
-    """
-    from youtube_transcript_api import YouTubeTranscriptApi
-
-    proxy = settings.youtube_proxy.strip()
-
-    if hasattr(YouTubeTranscriptApi, "get_transcript"):  # 0.6.x：類別方法
-        kwargs = {"proxies": {"http": proxy, "https": proxy}} if proxy else {}
-        return YouTubeTranscriptApi.get_transcript(youtube_id, languages=_LANGUAGES, **kwargs)
-
-    # 1.x：實例方法，回傳的是物件不是 dict
-    api = YouTubeTranscriptApi()
-    if proxy:
-        from youtube_transcript_api.proxies import GenericProxyConfig
-
-        api = YouTubeTranscriptApi(
-            proxy_config=GenericProxyConfig(http_url=proxy, https_url=proxy)
-        )
-
-    fetched = api.fetch(youtube_id, languages=_LANGUAGES)
-    return [{"text": s.text, "start": s.start, "duration": s.duration} for s in fetched]
 
 
 def _clean(text: str) -> str:
@@ -70,8 +32,9 @@ def _clean(text: str) -> str:
     return " ".join(text.replace("\n", " ").split())
 
 
+# ── 片段整理與合併 ──────────────────────────────────────
 def _normalize_fragments(raw: list[dict]) -> list[dict]:
-    """整理原始字幕片段，回傳 [{text, start, end}]（秒）。
+    """整理原始片段，回傳 [{text, start, end}]（秒）。
 
     自動字幕是「滾動式」的：相鄰片段的時間區間會大幅重疊，而且常重複上一段的字。
     直接拿 start+duration 當結束時間，會讓段落的結尾往後飄好幾秒 —— 這是文字與聲音
@@ -98,8 +61,20 @@ def _normalize_fragments(raw: list[dict]) -> list[dict]:
     return items
 
 
+def _to_fragments(raw: list[dict]) -> list[dict]:
+    """原始片段 → [{start_ms, end_ms, text}]（毫秒）。"""
+    return [
+        {
+            "start_ms": int(f["start"] * 1000),
+            "end_ms": int(f["end"] * 1000),
+            "text": f["text"],
+        }
+        for f in _normalize_fragments(raw)
+    ]
+
+
 def _merge_into_sentences(raw: list[dict]) -> list[dict]:
-    """把碎片字幕合併成接近句子的段落，回傳 [{start_ms, end_ms, text}]。"""
+    """把碎片合併成接近句子的段落，回傳 [{start_ms, end_ms, text}]。"""
     fragments = _normalize_fragments(raw)
 
     merged: list[dict] = []
@@ -141,67 +116,30 @@ def _merge_into_sentences(raw: list[dict]) -> list[dict]:
     return merged
 
 
-# ── Whisper fallback ────────────────────────────────────
-def _download_audio(youtube_id: str, target_dir: str) -> Path:
-    """只下載 bestaudio、不做轉檔，因此不需要 ffmpeg（Whisper 吃 m4a / webm）。"""
-    import yt_dlp
-
-    options = {
-        "format": "bestaudio[ext=m4a]/bestaudio",
-        "outtmpl": os.path.join(target_dir, "%(id)s.%(ext)s"),
-        "quiet": True,
-        "no_warnings": True,
-        "noplaylist": True,
-    }
-    if settings.youtube_proxy.strip():
-        options["proxy"] = settings.youtube_proxy.strip()
-    with yt_dlp.YoutubeDL(options) as ydl:
-        info = ydl.extract_info(f"https://www.youtube.com/watch?v={youtube_id}", download=True)
-        return Path(ydl.prepare_filename(info))
-
-
-def _transcribe_with_whisper(youtube_id: str, user_id: int) -> list[dict]:
-    from openai import OpenAI
-
-    cfg = llm_provider_service.get_active_config(user_id)
-    if cfg["provider"] != "openai":
-        raise ValueError(
-            "這支影片沒有英文字幕，需要用 Whisper 轉錄，"
-            "但你目前啟用的是 Ollama。請到「設定」啟用一組 OpenAI provider 後重試。"
-        )
-
-    with tempfile.TemporaryDirectory() as tmp:
-        audio_path = _download_audio(youtube_id, tmp)
-        size = audio_path.stat().st_size
-        if size > _WHISPER_MAX_BYTES:
-            raise ValueError(
-                f"音訊檔 {size / 1024 / 1024:.1f}MB 超過 Whisper API 的 25MB 上限，"
-                "請改用較短的影片，或找有字幕的版本。"
-            )
-
-        client = OpenAI(api_key=cfg["api_key"], base_url=cfg["base_url"])
-        with audio_path.open("rb") as f:
-            result = client.audio.transcriptions.create(
-                model="whisper-1",
-                file=f,
-                language="en",
-                response_format="verbose_json",  # 要時間軸就得用這個格式
-            )
-
-    segments = getattr(result, "segments", None) or []
-    return [
-        {
-            "start_ms": int(float(s.start) * 1000),
-            "end_ms": int(float(s.end) * 1000),
-            "text": _clean(s.text),
-        }
-        for s in segments
-        if _clean(getattr(s, "text", ""))
-    ]
-
-
 # ── 寫入 ────────────────────────────────────────────────
-def _save_segments(video_id: int, segments: list[dict], source: str) -> None:
+def _save_fragments(video_id: int, fragments: list[dict]) -> None:
+    """保存原始細碎片段，供之後「重新斷句」推算字級時間。"""
+    with engine.begin() as conn:
+        conn.execute(
+            delete(transcript_fragments).where(transcript_fragments.c.video_id == video_id)
+        )
+        if fragments:
+            conn.execute(
+                insert(transcript_fragments),
+                [
+                    {
+                        "video_id": video_id,
+                        "idx": i,
+                        "start_ms": f["start_ms"],
+                        "end_ms": f["end_ms"],
+                        "text": f["text"],
+                    }
+                    for i, f in enumerate(fragments)
+                ],
+            )
+
+
+def _save_segments(video_id: int, segments: list[dict]) -> None:
     with engine.begin() as conn:
         # 重跑時先清掉舊的，避免重複
         conn.execute(delete(transcript_segments).where(transcript_segments.c.video_id == video_id))
@@ -222,21 +160,11 @@ def _save_segments(video_id: int, segments: list[dict], source: str) -> None:
         conn.execute(
             update(videos)
             .where(videos.c.id == video_id)
-            .values(transcript_status="ready", transcript_source=source, error_message=None)
-        )
-
-
-def _mark_failed(video_id: int, message: str) -> None:
-    with engine.begin() as conn:
-        conn.execute(
-            update(videos)
-            .where(videos.c.id == video_id)
-            .values(transcript_status="failed", error_message=message[:1000])
+            .values(transcript_status="ready", transcript_source="manual", error_message=None)
         )
 
 
 # ── 手動貼上字幕 ────────────────────────────────────────
-# 雲端環境被 YouTube 擋 IP 時的免費解法：使用者自己複製字幕貼進來。
 # 支援三種常見格式：
 #   1. SRT / VTT     00:00:01,000 --> 00:00:04,000
 #   2. YouTube 轉錄稿面板複製的內容   0:05 <換行或空白> 文字
@@ -260,7 +188,7 @@ def _timestamp_to_ms(value: str) -> int:
 
 
 def parse_manual_transcript(raw: str) -> list[dict]:
-    """把貼上的字幕解析成 [{start_ms, end_ms, text}]。解析不出來就丟 ValueError。"""
+    """把貼上的字幕解析成 [{text, start, duration}]（秒）。解析不出來就丟 ValueError。"""
     lines = [line.strip() for line in raw.splitlines()]
     entries: list[dict] = []
 
@@ -317,8 +245,7 @@ def parse_manual_transcript(raw: str) -> list[dict]:
             "或 YouTube「顯示轉錄稿」面板複製出來的文字（每段前面要有 0:05 這種時間）。"
         )
 
-    # 轉成和字幕 API 一樣的形狀，重用既有的合併邏輯
-    fragments = [
+    return [
         {
             "text": e["text"],
             "start": e["start_ms"] / 1000,
@@ -326,132 +253,150 @@ def parse_manual_transcript(raw: str) -> list[dict]:
         }
         for e in sorted(entries, key=lambda e: e["start_ms"])
     ]
-    return _merge_into_sentences(fragments)
 
 
 def ingest_manual(video_id: int, raw: str) -> int:
     """存入手動貼上的字幕，回傳段落數。"""
-    segments = parse_manual_transcript(raw)
-    _save_segments(video_id, segments, "manual")
+    parsed = parse_manual_transcript(raw)
+    _save_fragments(video_id, _to_fragments(parsed))
+    segments = _merge_into_sentences(parsed)
+    _save_segments(video_id, segments)
     return len(segments)
 
 
-# ── AI 重新斷句 ─────────────────────────────────────────
-# 自動字幕沒有標點，靠停頓與長度上限切出來的句子常常怪怪的。
-# 這裡請 LLM 補標點並重組成完整句子，時間軸沿用被合併段落的頭尾，所以不會跑掉。
-_RESEGMENT_SYSTEM = """你會拿到一份英文影片的逐段文字稿，每段前面有編號。
-這是自動語音辨識的產物，沒有標點、大小寫也不正確。
+# ── AI 重新斷句（一句一段）─────────────────────────────
+# 難點：自動字幕的片段不會剛好切在句尾，「句子結束在第幾秒」表面上無從得知。
+# 解法是**字級時間內插**：
+#   每個片段有起訖時間與固定字數 → 推算每個字大約落在什麼時間 →
+#   LLM 只負責補標點斷句（不准改字）→ 再把句子的字對回時間軸。
+# 誤差約 ±0.2~0.3 秒，對 AB 循環與逐句對照完全夠用。
+_RESEGMENT_SYSTEM = """你會拿到一段英文語音辨識的逐字稿，沒有標點、大小寫也不正確。
 
-請把它重組成完整的句子：
-- 合併相鄰的段落，讓每一組剛好是一個完整句子（或語意完整的子句）。
+請把它切成一句一句：
+- 每個輸出項目**剛好是一個完整句子**，不要把多句合在一起。
 - 補上正確的標點與大小寫。
-- **不可以改動、增加或刪除任何單字**，只能加標點與調整大小寫。
-- 每一組用 start_index / end_index 標出它涵蓋哪幾段（含頭含尾）。
-- 所有段落都必須被涵蓋到，不能跳號、不能重疊，且要照順序。"""
+- **絕對不可以改動、增加或刪除任何單字**，單字順序必須與原文完全相同。
+  你只能加標點、調整大小寫。
+- 句子太長時可在自然的子句邊界（例如 and / but / because 之前）切開。"""
 
-# 一次送給 LLM 的段落數上限（太多會超出 context 也容易漏號）
-_RESEGMENT_BATCH = 60
+# 一次送給 LLM 的字數（太多容易漏字，太少會切斷句子）
+_RESEGMENT_BATCH_WORDS = 400
+
+# 對齊時容許模型輕微改字，往後找幾個位置重新同步
+_ALIGN_LOOKAHEAD = 6
 
 
-def _resegment_batch(llm, segments: list[dict], offset: int) -> list[dict]:
-    """回傳 [{start_ms, end_ms, text}]；LLM 回得不完整就退回原樣。"""
-    listing = "\n".join(f"{i}. {s['text']}" for i, s in enumerate(segments))
-    result = llm.invoke([("system", _RESEGMENT_SYSTEM), ("human", listing)])
-
-    merged: list[dict] = []
-    covered = 0
-    for group in result.groups:
-        start = max(0, min(group.start_index, len(segments) - 1))
-        end = max(start, min(group.end_index, len(segments) - 1))
-        text = group.text.strip()
-        if not text:
+def _build_word_timeline(fragments: list[dict]) -> list[dict]:
+    """把片段攤平成 [{word, start_ms, end_ms}]，片段內用字數平均內插。"""
+    words: list[dict] = []
+    for fragment in fragments:
+        tokens = fragment["text"].split()
+        if not tokens:
             continue
-        merged.append(
+        span = max(1, fragment["end_ms"] - fragment["start_ms"])
+        step = span / len(tokens)
+        for i, token in enumerate(tokens):
+            words.append(
+                {
+                    "word": token,
+                    "start_ms": int(fragment["start_ms"] + i * step),
+                    "end_ms": int(fragment["start_ms"] + (i + 1) * step),
+                }
+            )
+    return words
+
+
+def _normalize_word(word: str) -> str:
+    return re.sub(r"[^a-z0-9']", "", word.lower())
+
+
+def _align_sentences(sentences: list[str], words: list[dict]) -> list[dict]:
+    """把 LLM 斷好的句子對回字級時間軸。"""
+    segments: list[dict] = []
+    position = 0
+
+    for sentence in sentences:
+        tokens = [t for t in (_normalize_word(w) for w in sentence.split()) if t]
+        if not tokens or position >= len(words):
+            continue
+
+        # 對齊起點：模型若動了個別字，往後找幾格重新同步
+        for shift in range(_ALIGN_LOOKAHEAD):
+            if (
+                position + shift < len(words)
+                and _normalize_word(words[position + shift]["word"]) == tokens[0]
+            ):
+                position += shift
+                break
+
+        start = position
+        end = min(len(words) - 1, position + len(tokens) - 1)
+        segments.append(
             {
-                "start_ms": segments[start]["start_ms"],
-                "end_ms": segments[end]["end_ms"],
-                "text": text,
+                "start_ms": words[start]["start_ms"],
+                "end_ms": words[end]["end_ms"],
+                "text": sentence.strip(),
             }
         )
-        covered += end - start + 1
+        position = end + 1
 
-    # 涵蓋率太低代表模型漏了一大段，寧可不換
-    if not merged or covered < len(segments) * 0.8:
-        print(f"[resegment] 第 {offset} 批涵蓋率不足（{covered}/{len(segments)}），保留原斷句")
-        return segments
-    return merged
+    return segments
 
 
 def resegment_with_llm(user_id: int, video_id: int) -> int:
-    """用 LLM 重新斷句，回傳新的段落數。"""
-    from sqlalchemy import select as _select
-
-    from agents.schemas import SentenceGroups
+    """用 LLM 重新斷句成「一句一段」，回傳新的段落數。"""
+    from agents.schemas import PunctuatedSentences
     from db.tables import phrases
     from llm import get_chat_model
 
     with engine.connect() as conn:
-        rows = conn.execute(
-            _select(transcript_segments)
-            .where(transcript_segments.c.video_id == video_id)
-            .order_by(transcript_segments.c.idx)
+        fragment_rows = conn.execute(
+            select(transcript_fragments)
+            .where(transcript_fragments.c.video_id == video_id)
+            .order_by(transcript_fragments.c.idx)
         )
-        segments = [dict(r._mapping) for r in rows]
+        fragments = [dict(r._mapping) for r in fragment_rows]
 
-    if not segments:
+        if not fragments:
+            # 舊資料沒有存原始片段，退而求其次用現有段落（時間解析度較差）
+            segment_rows = conn.execute(
+                select(transcript_segments)
+                .where(transcript_segments.c.video_id == video_id)
+                .order_by(transcript_segments.c.idx)
+            )
+            fragments = [dict(r._mapping) for r in segment_rows]
+
+    if not fragments:
         raise ValueError("這支影片還沒有文字稿")
 
-    llm = get_chat_model(user_id).with_structured_output(SentenceGroups)
+    words = _build_word_timeline(fragments)
+    if not words:
+        raise ValueError("文字稿是空的")
 
-    rebuilt: list[dict] = []
-    for offset in range(0, len(segments), _RESEGMENT_BATCH):
-        batch = segments[offset : offset + _RESEGMENT_BATCH]
-        rebuilt.extend(_resegment_batch(llm, batch, offset))
+    llm = get_chat_model(user_id).with_structured_output(PunctuatedSentences)
+
+    sentences: list[str] = []
+    for offset in range(0, len(words), _RESEGMENT_BATCH_WORDS):
+        batch = words[offset : offset + _RESEGMENT_BATCH_WORDS]
+        result = llm.invoke(
+            [("system", _RESEGMENT_SYSTEM), ("human", " ".join(w["word"] for w in batch))]
+        )
+        sentences.extend(s for s in result.sentences if s.strip())
+
+    rebuilt = _align_sentences(sentences, words)
+
+    # 對齊涵蓋率太低代表模型漏了一大段，寧可不動
+    covered = sum(len(s["text"].split()) for s in rebuilt)
+    if not rebuilt or covered < len(words) * 0.8:
+        raise ValueError(
+            f"重新斷句失敗：只對應到 {covered}/{len(words)} 個字，已保留原本的文字稿。請再試一次。"
+        )
 
     with engine.begin() as conn:
-        # 段落要重建，已收藏片語指向的舊 segment_id 會失效，先解除關聯
+        # 段落會重建，已收藏片語指向的舊 segment_id 會失效，先解除關聯
         conn.execute(
             update(phrases).where(phrases.c.video_id == video_id).values(segment_id=None)
         )
 
-    source = "manual"
-    with engine.connect() as conn:
-        current = conn.execute(
-            _select(videos.c.transcript_source).where(videos.c.id == video_id)
-        ).scalar()
-        source = current or source
-
-    _save_segments(video_id, rebuilt, source)
+    _save_segments(video_id, rebuilt)
     return len(rebuilt)
-
-
-def ingest(video_id: int, youtube_id: str, user_id: int) -> None:
-    """背景工作：抓字幕 → 失敗改 Whisper → 寫入 segments。任何例外都寫回 DB。"""
-    try:
-        raw = _fetch_captions(youtube_id)
-        segments = _merge_into_sentences(raw)
-        if segments:
-            _save_segments(video_id, segments, "caption")
-            return
-        caption_error = "字幕內容是空的"
-    except Exception as e:  # 字幕不存在 / 被停用 / 網路問題，都轉走 Whisper
-        caption_error = f"{type(e).__name__}: {e}"
-
-    try:
-        segments = _transcribe_with_whisper(youtube_id, user_id)
-        if not segments:
-            raise ValueError("Whisper 沒有回傳任何內容")
-        _save_segments(video_id, segments, "whisper")
-    except Exception as e:
-        hint = ""
-        if "RequestBlocked" in caption_error or "IpBlocked" in caption_error:
-            # 雲端機房 IP 被 YouTube 擋是常態，直接告訴使用者按哪顆按鈕繞過
-            hint = "：這台主機的 IP 被 YouTube 封鎖了，請改用「貼上字幕」自己把轉錄稿貼進來"
-        if hint:
-            # IP 被擋時 Whisper 也一定失敗（同一個來源），細節對使用者沒有幫助
-            _mark_failed(video_id, f"字幕擷取失敗{hint}。")
-        else:
-            _mark_failed(
-                video_id,
-                f"字幕擷取失敗（{caption_error}）；Whisper 轉錄也失敗（{type(e).__name__}: {e}）",
-            )

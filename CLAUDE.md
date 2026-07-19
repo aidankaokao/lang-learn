@@ -30,7 +30,7 @@
 4. **要資料庫** → SQLAlchemy Core，初期 SQLite → Cloud Run 換 PostgreSQL。
 5. **暫時不出 Docker 部署** → 階段 5 才做，屆時另寫 Cloud Run 部署文件。
 
-其他已確認：文字稿走「YouTube 字幕優先，無字幕才 Whisper API」；播放走 **YouTube IFrame Player API**（不下載音檔）；帳號為帳密 JWT，預設管理員 `admin/admin`。
+其他已確認：文字稿由**使用者手動貼上**（YouTube 封鎖雲端 IP，無法自動擷取）；播放走 **YouTube IFrame Player API**（不下載音檔）；帳號為帳密 JWT，預設管理員 `admin/admin`。
 
 <details>
 <summary>原始確認題目（新專案沿用此模板時參考）</summary>
@@ -90,7 +90,7 @@ backend/          FastAPI（python api.py，port 8000，路由一律 /api）
 │                     schemas.py（結構化輸出）
 ├── skills/           phrase-extraction/、sentence-grading/、dictation/（各含 SKILL.md）
 ├── services/         商業邏輯（路由薄、service 厚）
-│                     youtube / transcript（字幕→Whisper fallback）/ video / clip / phrase
+│                     youtube / transcript（手動貼上 + AI 重新斷句）/ video / clip / phrase
 │                     dictation（difflib 比對，不走 LLM）/ chat / tts（edge-tts 微軟語音）
 │                     srs（間隔重複，phrases 與 clips 共用）/ user / llm_provider
 └── routers/          auth、settings、videos、clips、phrases、chat、tts、admin_users

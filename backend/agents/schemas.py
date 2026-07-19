@@ -28,16 +28,13 @@ class PhraseExplanation(BaseModel):
     paraphrases: list[str] = Field(default_factory=list, description="3 個英文的換句話說")
 
 
-class SentenceGroup(BaseModel):
-    """把數個文字稿段落合併成一個完整句子。"""
+class PunctuatedSentences(BaseModel):
+    """把沒有標點的語音辨識文字，重新斷成一句一項。"""
 
-    start_index: int = Field(description="這句涵蓋的第一個段落編號")
-    end_index: int = Field(description="這句涵蓋的最後一個段落編號（含）")
-    text: str = Field(description="補上標點與大小寫後的完整句子")
-
-
-class SentenceGroups(BaseModel):
-    groups: list[SentenceGroup] = Field(default_factory=list)
+    sentences: list[str] = Field(
+        default_factory=list,
+        description="每一項是一個完整句子，已補上標點與大小寫，單字順序與原文完全相同",
+    )
 
 
 class SentenceGrading(BaseModel):

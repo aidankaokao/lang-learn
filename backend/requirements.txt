@@ -25,10 +25,9 @@ langchain-core>=0.3
 langchain-openai>=0.2      # ChatOpenAI（外部 OpenAI / 本地 vLLM）
 langchain-ollama>=0.2      # ChatOllama（本地 Ollama）
 
-# ── 影片 / 文字稿擷取（階段 3）──
-youtube-transcript-api>=0.6
-yt-dlp>=2024.1             # 無字幕時抽音訊給 Whisper API
-openai>=1.12               # Whisper API fallback（whisper-1）
+# 註：不需要 youtube-transcript-api / yt-dlp。
+# YouTube 封鎖所有雲端供應商的 IP，自動擷取在 Cloud Run 上一定失敗，
+# 文字稿改由使用者從「顯示轉錄稿」複製貼上（見 services/transcript_service.py）。
 
 # ── 文字轉語音（片語朗讀）──
 # 開源 MIT、免金鑰，取用微軟 Edge 的朗讀服務，可用 en-GB Neural 語音

@@ -1,10 +1,9 @@
-import { AlertCircle, ClipboardPaste, Loader2, Plus, RefreshCw, Trash2, X } from "lucide-react";
+import { ClipboardPaste, Loader2, Plus, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
 
 import { Pagination } from "@/components/Pagination";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -44,34 +43,17 @@ export function VideosPage() {
     void reload();
   }, [reload]);
 
-  // 有影片還在抓文字稿就每 3 秒輪詢一次，抓完自動停
-  useEffect(() => {
-    if (!videos.some((v) => v.transcript_status === "pending")) return;
-    const timer = window.setInterval(() => void reload(), 3000);
-    return () => window.clearInterval(timer);
-  }, [videos, reload]);
-
   async function importVideo() {
     setImporting(true);
     try {
       await api.post("/videos", { url });
-      toast.success("已加入，正在抓取文字稿…");
+      toast.success("已加入，接著按「貼上字幕」匯入轉錄稿");
       setUrl("");
       await reload();
     } catch (e) {
       toast.error((e as Error).message);
     } finally {
       setImporting(false);
-    }
-  }
-
-  async function retry(v: Video) {
-    try {
-      await api.post(`/videos/${v.id}/retry`);
-      toast.success("重新抓取中…");
-      await reload();
-    } catch (e) {
-      toast.error((e as Error).message);
     }
   }
 
@@ -110,10 +92,8 @@ export function VideosPage() {
         <CardHeader>
           <CardTitle>加入影片</CardTitle>
           <CardDescription>
-            會先自動抓 YouTube 英文字幕，沒有字幕才用 Whisper 轉錄。
-            <br />
-            若顯示<b>擷取失敗</b>（雲端主機的 IP 常被 YouTube 封鎖），
-            可以用卡片上的<b>「貼上字幕」</b>自己把轉錄稿貼進來，後續功能完全一樣。
+            貼上網址加入後，再用卡片上的<b>「貼上字幕」</b>把 YouTube 的轉錄稿貼進來。
+            （YouTube 封鎖雲端主機的 IP，沒辦法自動抓。）
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-wrap items-center gap-3">
@@ -154,69 +134,30 @@ export function VideosPage() {
                   />
                 )}
 
-                <div className="min-w-0 flex-1 space-y-1">
+                <div className="min-w-0 flex-1">
                   <p className="truncate font-medium">{v.title}</p>
                   <p className="truncate text-xs text-muted-foreground">{v.channel}</p>
-
-                  <div className="flex flex-wrap items-center gap-2 pt-1">
-                    {v.transcript_status === "pending" && (
-                      <Badge variant="amber" className="gap-1">
-                        <Loader2 className="h-3 w-3 animate-spin" strokeWidth={1.75} />
-                        抓取文字稿中
-                      </Badge>
-                    )}
-                    {v.transcript_status === "ready" && (
-                      <>
-                        <Badge variant="green">
-                          {v.transcript_source === "whisper"
-                            ? "Whisper 轉錄"
-                            : v.transcript_source === "manual"
-                              ? "手動貼上"
-                              : "YouTube 字幕"}
-                        </Badge>
-                        <Badge variant="muted">{v.segment_count} 句</Badge>
-                        {!!v.clip_count && <Badge variant="teal">{v.clip_count} 個例句</Badge>}
-                      </>
-                    )}
-                    {v.transcript_status === "failed" && (
-                      <Badge variant="amber" className="gap-1">
-                        <AlertCircle className="h-3 w-3" strokeWidth={1.75} />
-                        擷取失敗
-                      </Badge>
-                    )}
-                  </div>
-
-                  {v.transcript_status === "failed" && v.error_message && (
-                    <p className="pt-1 text-xs text-muted-foreground">{v.error_message}</p>
-                  )}
                 </div>
 
                 <div className="flex items-center gap-1">
-                  {v.transcript_status === "ready" && (
+                  {v.transcript_status === "ready" ? (
                     <Link to={`/videos/${v.id}`}>
                       <Button variant="gradient" size="sm">
                         開始學習
                       </Button>
                     </Link>
-                  )}
-                  {v.transcript_status === "failed" && (
-                    <>
-                      <Button variant="secondary" size="sm" onClick={() => retry(v)}>
-                        <RefreshCw strokeWidth={1.75} />
-                        重試
-                      </Button>
-                      <Button
-                        variant="gradient"
-                        size="sm"
-                        onClick={() => {
-                          setPastingFor(pastingFor === v.id ? null : v.id);
-                          setPastedText("");
-                        }}
-                      >
-                        <ClipboardPaste strokeWidth={1.75} />
-                        貼上字幕
-                      </Button>
-                    </>
+                  ) : (
+                    <Button
+                      variant="gradient"
+                      size="sm"
+                      onClick={() => {
+                        setPastingFor(pastingFor === v.id ? null : v.id);
+                        setPastedText("");
+                      }}
+                    >
+                      <ClipboardPaste strokeWidth={1.75} />
+                      貼上字幕
+                    </Button>
                   )}
                   <Button variant="ghost" size="icon" title="刪除" onClick={() => remove(v)}>
                     <Trash2 className="h-4 w-4 text-destructive" strokeWidth={1.75} />

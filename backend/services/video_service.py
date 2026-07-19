@@ -1,6 +1,6 @@
-"""影片匯入與查詢。文字稿的實際擷取在 transcript_service（背景執行）。"""
+"""影片匯入與查詢。文字稿由使用者手動貼上，見 transcript_service。"""
 
-from sqlalchemy import delete, func, insert, select, update
+from sqlalchemy import delete, insert, select
 
 from db.engine import engine
 from db.tables import (
@@ -9,6 +9,7 @@ from db.tables import (
     clips,
     phrase_practices,
     phrases,
+    transcript_fragments,
     transcript_segments,
     videos,
 )
@@ -20,32 +21,13 @@ def _row(row) -> dict | None:
 
 
 def list_videos(user_id: int) -> list[dict]:
-    """列表附上各影片的句數與已擷取例句數，前端不必再逐支查。"""
-    segment_count = (
-        select(transcript_segments.c.video_id, func.count().label("segment_count"))
-        .group_by(transcript_segments.c.video_id)
-        .subquery()
-    )
-    clip_count = (
-        select(clips.c.video_id, func.count().label("clip_count"))
-        .group_by(clips.c.video_id)
-        .subquery()
-    )
-
-    stmt = (
-        select(
-            videos,
-            func.coalesce(segment_count.c.segment_count, 0).label("segment_count"),
-            func.coalesce(clip_count.c.clip_count, 0).label("clip_count"),
-        )
-        .select_from(videos)
-        .outerjoin(segment_count, segment_count.c.video_id == videos.c.id)
-        .outerjoin(clip_count, clip_count.c.video_id == videos.c.id)
-        .where(videos.c.user_id == user_id)
-        .order_by(videos.c.created_at.desc())
-    )
     with engine.connect() as conn:
-        return [dict(r._mapping) for r in conn.execute(stmt)]
+        rows = conn.execute(
+            select(videos)
+            .where(videos.c.user_id == user_id)
+            .order_by(videos.c.created_at.desc())
+        )
+        return [dict(r._mapping) for r in rows]
 
 
 def get_video(user_id: int, video_id: int) -> dict | None:
@@ -96,19 +78,6 @@ def create_video(user_id: int, url: str) -> dict:
     return get_video(user_id, new_id)
 
 
-def mark_pending(user_id: int, video_id: int) -> dict:
-    """重試前把狀態打回 pending，讓前端的輪詢重新轉起來。"""
-    if get_video(user_id, video_id) is None:
-        raise ValueError("找不到這支影片")
-    with engine.begin() as conn:
-        conn.execute(
-            update(videos)
-            .where(videos.c.id == video_id)
-            .values(transcript_status="pending", error_message=None)
-        )
-    return get_video(user_id, video_id)
-
-
 def delete_video(user_id: int, video_id: int) -> None:
     """連同文字稿、例句、片語、問答紀錄一起刪。"""
     if get_video(user_id, video_id) is None:
@@ -128,4 +97,5 @@ def delete_video(user_id: int, video_id: int) -> None:
         conn.execute(delete(phrases).where(phrases.c.video_id == video_id))
         conn.execute(delete(chat_messages).where(chat_messages.c.video_id == video_id))
         conn.execute(delete(transcript_segments).where(transcript_segments.c.video_id == video_id))
+        conn.execute(delete(transcript_fragments).where(transcript_fragments.c.video_id == video_id))
         conn.execute(delete(videos).where(videos.c.id == video_id))
