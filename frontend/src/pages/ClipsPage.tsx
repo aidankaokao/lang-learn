@@ -35,9 +35,12 @@ export function ClipsPage() {
 
   const { page, setPage, pageCount, paged, total } = usePagination(filtered);
 
-  // 一個播放器輪流服務所有例句：換例句時 hook 會自己重建
-  const player = useYouTubePlayer(playing?.youtube_id);
-  const { ready, currentMs, seek } = player;
+  // 播放器**常駐**（不是點下去才建立）：手機要求播放發生在使用者手勢的同一個呼叫堆疊裡，
+  // 等點擊後才建立播放器、ready 後再播，會變成有畫面沒聲音。
+  // 所以用第一筆例句的影片把播放器先開起來，點擊時只做 loadVideoById。
+  const bootstrapVideoId = clips[0]?.youtube_id;
+  const player = useYouTubePlayer(bootstrapVideoId);
+  const { ready, currentMs, seek, loadVideo } = player;
 
   useEffect(() => {
     usePageHeader.getState().set("例句庫", "點播放就會一直循環，適合塞著耳機重複聽");
@@ -57,11 +60,6 @@ export function ClipsPage() {
     void reload();
   }, [reload]);
 
-  // 播放器就緒 → 跳到 A 點
-  useEffect(() => {
-    if (ready && playing) seek(playing.start_ms);
-  }, [ready, playing, seek]);
-
   // 播過 B 點就跳回 A，形成無限循環，直到使用者按停止
   useEffect(() => {
     if (!playing || !ready) return;
@@ -69,7 +67,15 @@ export function ClipsPage() {
   }, [currentMs, playing, ready, seek]);
 
   function togglePlay(clip: Clip) {
-    setPlaying((prev) => (prev?.id === clip.id ? null : clip));
+    if (playing?.id === clip.id) {
+      player.pause();
+      setPlaying(null);
+      return;
+    }
+    if (!clip.youtube_id) return;
+    // 這一行必須同步發生在點擊事件裡，手機才會給播放權限
+    loadVideo(clip.youtube_id, clip.start_ms);
+    setPlaying(clip);
   }
 
   async function reveal(clip: Clip) {
@@ -134,32 +140,45 @@ export function ClipsPage() {
 
   return (
     <>
-      {/* 正在播放的迷你播放器：手機上必須看得到播放器，瀏覽器才肯播 */}
-      {playing && (
-        <Card className="animate-fade-up sticky top-0 z-10">
-          <CardContent className="flex items-center gap-4 p-4">
-            <div className="aspect-video w-24 shrink-0 overflow-hidden rounded-xl bg-black/80 sm:w-32">
-              <div ref={player.containerRef} className="h-full w-full" />
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2">
-                <Badge variant="teal" className="gap-1">
-                  <Repeat className="h-3 w-3" strokeWidth={1.75} />
-                  循環中
-                </Badge>
-                <span className="font-mono text-xs text-muted-foreground">
-                  {formatTime(playing.start_ms)} – {formatTime(playing.end_ms)}
-                </span>
+      {/* 迷你播放器**常駐**：手機不讓「點擊後才建立」的播放器出聲，
+          而且看不見的播放器也會被擋，所以固定顯示在頂端。 */}
+      <Card className="animate-fade-up sticky top-0 z-10">
+        <CardContent className="flex items-center gap-4 p-4">
+          <div className="aspect-video w-24 shrink-0 overflow-hidden rounded-xl bg-black/80 sm:w-32">
+            <div ref={player.containerRef} className="h-full w-full" />
+          </div>
+
+          {playing ? (
+            <>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <Badge variant="teal" className="gap-1">
+                    <Repeat className="h-3 w-3" strokeWidth={1.75} />
+                    循環中
+                  </Badge>
+                  <span className="font-mono text-xs text-muted-foreground">
+                    {formatTime(playing.start_ms)} – {formatTime(playing.end_ms)}
+                  </span>
+                </div>
+                <p className="truncate pt-1 text-sm">{playing.text}</p>
               </div>
-              <p className="truncate pt-1 text-sm">{playing.text}</p>
-            </div>
-            <Button variant="secondary" size="sm" className="shrink-0" onClick={() => setPlaying(null)}>
-              <Square strokeWidth={1.75} />
-              停止
-            </Button>
-          </CardContent>
-        </Card>
-      )}
+              <Button
+                variant="secondary"
+                size="sm"
+                className="shrink-0"
+                onClick={() => togglePlay(playing)}
+              >
+                <Square strokeWidth={1.75} />
+                停止
+              </Button>
+            </>
+          ) : (
+            <p className="min-w-0 flex-1 text-sm text-muted-foreground">
+              點下方例句的耳機鈕開始循環播放
+            </p>
+          )}
+        </CardContent>
+      </Card>
 
       <div className="space-y-3">
         <SearchBox value={query} onChange={setQuery} placeholder="搜尋例句原文、中文或影片標題…" />

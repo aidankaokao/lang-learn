@@ -75,9 +75,35 @@ export function useYouTubePlayer(videoId: string | undefined) {
     if (autoplay) p.playVideo?.();
   }, []);
 
+  /**
+   * 在既有播放器上換一支影片並直接播。
+   *
+   * 手機瀏覽器要求「播放」必須發生在使用者手勢的同一個呼叫堆疊裡。
+   * 如果等點擊後才建立播放器，等它 ready 再 playVideo 已經來不及，
+   * 會變成沒有聲音但狀態顯示 playing。所以播放器要常駐，切換影片走這支。
+   */
+  const loadVideo = useCallback((nextVideoId: string, startMs = 0) => {
+    const p = playerRef.current;
+    if (!p?.loadVideoById) return;
+    p.loadVideoById({ videoId: nextVideoId, startSeconds: startMs / 1000 });
+    setCurrentMs(startMs);
+  }, []);
+
   const play = useCallback(() => playerRef.current?.playVideo?.(), []);
   const pause = useCallback(() => playerRef.current?.pauseVideo?.(), []);
   const setRate = useCallback((rate: number) => playerRef.current?.setPlaybackRate?.(rate), []);
 
-  return { containerRef, ready, playing, currentMs, durationMs, error, seek, play, pause, setRate };
+  return {
+    containerRef,
+    ready,
+    playing,
+    currentMs,
+    durationMs,
+    error,
+    seek,
+    loadVideo,
+    play,
+    pause,
+    setRate,
+  };
 }
