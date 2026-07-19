@@ -3,6 +3,7 @@ import {
   Bookmark,
   BookmarkPlus,
   Check,
+  ChevronDown,
   Loader2,
   Pause,
   Play,
@@ -55,6 +56,11 @@ export function StudyPage() {
   const [savedPhrases, setSavedPhrases] = useState<Set<string>>(new Set());
   const [savingPhrase, setSavingPhrase] = useState<string | null>(null);
   const [resegmenting, setResegmenting] = useState(false);
+
+  // 手機版把「例句」「片語萃取」預設收起來，免得把文字稿擠到很下面；
+  // 桌機不受影響（內容一律 lg:block）。
+  const [clipsOpen, setClipsOpen] = useState(false);
+  const [phrasesOpen, setPhrasesOpen] = useState(false);
 
   const player = useYouTubePlayer(video?.youtube_id);
   const { currentMs, seek, play, pause, playing, setRate } = player;
@@ -393,10 +399,20 @@ export function StudyPage() {
 
           {/* ── 已擷取的例句 ── */}
           <Card className="animate-fade-up">
-            <CardHeader className="flex-row items-center justify-between space-y-0">
+            <CardHeader
+              className="flex-row items-center justify-between space-y-0 lg:cursor-default"
+              onClick={() => setClipsOpen((v) => !v)}
+            >
               <CardTitle>這支影片的例句（{clips.length}）</CardTitle>
+              <ChevronDown
+                className={cn(
+                  "h-5 w-5 text-muted-foreground transition-transform lg:hidden",
+                  clipsOpen && "rotate-180",
+                )}
+                strokeWidth={1.75}
+              />
             </CardHeader>
-            <CardContent className="space-y-2">
+            <CardContent className={cn("space-y-2", !clipsOpen && "hidden lg:block")}>
               {clips.length === 0 ? (
                 <p className="py-4 text-center text-sm text-muted-foreground">
                   還沒有例句。設好 A、B 後按「存成例句」，或直接點右邊的句子快速框選。
@@ -433,21 +449,42 @@ export function StudyPage() {
           </Card>
           {/* ── AI 片語萃取 ── */}
           <Card className="animate-fade-up">
-            <CardHeader className="flex-row items-center justify-between space-y-0">
+            <CardHeader
+              className="flex-row items-center justify-between space-y-0 lg:cursor-default"
+              onClick={() => setPhrasesOpen((v) => !v)}
+            >
               <CardTitle className="flex items-center gap-2">
                 <Sparkles className="h-5 w-5 text-primary" strokeWidth={1.75} />
                 片語萃取
               </CardTitle>
-              <Button variant="gradient" size="sm" onClick={extractPhrases} disabled={extracting}>
-                {extracting ? (
-                  <Loader2 className="animate-spin" strokeWidth={1.75} />
-                ) : (
-                  <Sparkles strokeWidth={1.75} />
-                )}
-                {candidates ? "重新萃取" : "AI 萃取片語"}
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="gradient"
+                  size="sm"
+                  onClick={(e) => {
+                    e.stopPropagation(); // 別讓萃取按鈕順手把卡片收合
+                    setPhrasesOpen(true);
+                    extractPhrases();
+                  }}
+                  disabled={extracting}
+                >
+                  {extracting ? (
+                    <Loader2 className="animate-spin" strokeWidth={1.75} />
+                  ) : (
+                    <Sparkles strokeWidth={1.75} />
+                  )}
+                  {candidates ? "重新萃取" : "AI 萃取片語"}
+                </Button>
+                <ChevronDown
+                  className={cn(
+                    "h-5 w-5 text-muted-foreground transition-transform lg:hidden",
+                    phrasesOpen && "rotate-180",
+                  )}
+                  strokeWidth={1.75}
+                />
+              </div>
             </CardHeader>
-            <CardContent className="space-y-2">
+            <CardContent className={cn("space-y-2", !phrasesOpen && "hidden lg:block")}>
               {extracting && (
                 <p className="py-4 text-center text-sm text-muted-foreground">
                   正在讀整份文字稿挑片語，長影片可能要十幾秒…
@@ -506,8 +543,8 @@ export function StudyPage() {
         </div>
 
         {/* ── 右：文字稿 ── */}
-        {/* 手機上文字稿在播放器下方，給固定高度就好；桌機才貼齊視窗高度並固定 */}
-        <Card className="animate-fade-up flex h-[60vh] flex-col lg:sticky lg:top-0 lg:h-[calc(100vh-10rem)]">
+        {/* 手機上文字稿在播放器下方，給 75vh（至少 28rem）才讀得順；桌機才貼齊視窗高度並固定 */}
+        <Card className="animate-fade-up flex h-[75vh] min-h-[28rem] flex-col lg:sticky lg:top-0 lg:h-[calc(100vh-10rem)] lg:min-h-0">
           <CardHeader className="flex-row items-center justify-between space-y-0">
             <CardTitle className="flex items-center gap-2">
               <ScrollText className="h-5 w-5 text-primary" strokeWidth={1.75} />

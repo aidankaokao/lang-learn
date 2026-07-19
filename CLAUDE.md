@@ -25,10 +25,10 @@
 已確認的答案（細節與理由見 `DEVELOPMENT-PLAN.md` §2）：
 
 1. **要前端** → **Aurora Glass**；LLM provider 走**前端設定頁註冊**，每個使用者各自註冊自己的 key。
-2. **要 AI agent** → LangGraph（`phrase_extractor` / `tutor` / `phrase_coach` / `study_planner`）。
+2. **要 AI agent** → LangGraph（`phrase_extractor` / `phrase_coach` / `dictation_coach` / `tutor`）。
 3. **要 LLM** → `ChatOpenAI`（外部 OpenAI），設定從 DB 讀。
-4. **要資料庫** → SQLAlchemy Core，初期 SQLite → Cloud Run 換 PostgreSQL。
-5. **暫時不出 Docker 部署** → 階段 5 才做，屆時另寫 Cloud Run 部署文件。
+4. **要資料庫** → SQLAlchemy Core，本機 SQLite → Cloud Run 接 Neon PostgreSQL。
+5. **部署** → Cloud Run 單一容器（`Dockerfile.cloudrun`），GitHub push 自動建置。
 
 其他已確認：文字稿由**使用者手動貼上**（YouTube 封鎖雲端 IP，無法自動擷取）；播放走 **YouTube IFrame Player API**（不下載音檔）；帳號為帳密 JWT，預設管理員 `admin/admin`。
 
@@ -85,6 +85,8 @@ backend/          FastAPI（python api.py，port 8000，路由一律 /api）
 ├── security.py       JWT 簽發驗證 + get_current_user / require_admin
 ├── db/               engine.py（連線）、tables.py（Core Table 定義）
 │                     migrate.py（啟動時自動補新增的欄位；create_all 不會改既有的表）
+│                     文字稿是兩層：transcript_fragments（原始細碎片段，保留時間解析度）
+│                     + transcript_segments（合併後給人看／AB 擷取用，會被重新斷句覆寫）
 ├── llm/              get_chat_model()：唯一建構入口，設定從 DB 讀（勿直接 new ChatOpenAI）
 ├── agents/           LangGraph：phrase_extractor、phrase_coach、dictation_coach、tutor、
 │                     schemas.py（結構化輸出）
@@ -100,6 +102,7 @@ frontend/         React 18 + TS + Vite，Aurora Glass 風格
 │                     tts.ts（朗讀，走後端 /api/tts 的微軟 Neural 語音）
 ├── src/hooks/        useYouTubePlayer（IFrame 播放器 + 100ms 輪詢，AB 循環靠它）
 │                     usePagination（清單分頁，每頁 5 筆，前端切）
+├── src/components/   Pagination、SearchBox、SpeakButton、DiffView（聽寫比對視覺化）
 ├── src/stores/       auth（登入狀態）、pageHeader（集中式標題）、assistant（懸浮問答）
 ├── src/components/   ui/（shadcn 風元件）、layout/（Sidebar/Header/AppLayout）
 │                     assistant/（全站懸浮 AI 問答 + 反白工具列）
@@ -127,5 +130,16 @@ npm run dev                 # http://localhost:5173，/api 自動 proxy 到 8000
 
 - **一律照 `reference/` 的慣例**，不要自行發明架構或風格。
 - **不要幫我執行程式**，只改程式；要跑什麼直接把指令給我。
-- **改完程式要更新這份 `CLAUDE.md`**（保持精簡、勿超過 500 行；細節寫進 `DEVELOPMENT-PLAN.md`）。
+- **每一次改完程式，都要在同一個回合更新這份 `CLAUDE.md` 與 `DEVELOPMENT-PLAN.md`**，不要等我提醒。
+  - `CLAUDE.md`：只放「新 session 要先知道的事」—— 結構、慣例、啟動方式。保持精簡（勿超過 500 行）。
+  - `DEVELOPMENT-PLAN.md`：放細節 —— 架構決策與理由、資料表、agent 設計、API 清單、已知限制。
+  - 判準：**改了目錄結構或慣例 → 更新 `CLAUDE.md`；其餘一律進 `DEVELOPMENT-PLAN.md`。**
 - 只用開源或免費套件。
+
+### 這個專案踩過的坑（改相關程式前先看）
+
+- **YouTube 封鎖雲端 IP**：自動擷取字幕已移除，文字稿一律由使用者貼上。別再加回自動擷取。
+- **文字稿的兩層設計**：`transcript_fragments` 是重新斷句的時間來源，寫入後不要覆寫。
+- **手機播放**：必須在使用者手勢的同一個呼叫堆疊裡呼叫播放，且播放器不能隱藏。
+  例句庫的播放器因此是常駐的（見 `DEVELOPMENT-PLAN.md` §3）。
+- **`JWT_SECRET` 不能改**：加密 LLM API key 的金鑰從它推導，改了已存的 key 會解不開。
