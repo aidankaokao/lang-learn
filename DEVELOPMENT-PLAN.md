@@ -125,6 +125,15 @@ tool 用 closure 綁死 `user_id` / `video_id`，LLM 沒有機會存取別人的
   「收藏片語」只在學習頁出現 —— 由 StudyPage 在掛載時把 handler 註冊進
   `stores/assistant.ts`，工具列本身不需要知道自己在哪一頁。
 - 學習頁原本的問答卡片與反白列已移除，統一走懸浮視窗，避免兩個入口做同一件事。
+- **手機（< sm，640px）改成全螢幕面板**（一般手機聊天 App 的做法），桌機維持右下角浮動視窗。
+  原本在手機上的問題與對應：
+  - 一打開就彈鍵盤擋住紀錄 → 手機**不自動聚焦**；只有從反白「問 AI」進來（帶 context）才聚焦。
+  - 聚焦時整頁被放大 → iOS 對 < 16px 的輸入框會自動縮放，手機輸入框改 `text-base`（16px）。
+  - 鍵盤彈出後標題列被推出畫面 → `100vh` 不會扣掉鍵盤，改用 `hooks/useViewport.ts` 的
+    `useVisualViewport` 追實際可見高度（iOS 另外用 `offsetTop` 補回整頁被上推的位移），
+    面板縮到鍵盤上方，並自動捲到最新一則。
+  - 開啟時鎖住 `body` 捲動、訊息區 `overscroll-contain`，手指滑動不會捲到背後的頁面。
+  - 手機左上是「← 返回」（取代右上 ✕），輸入框 `enterKeyHint="send"` 讓鍵盤的 Enter 顯示「傳送」。
 
 Skills（`backend/skills/`，各含 `SKILL.md`）：`phrase-extraction`、`sentence-grading`、`dictation`。
 

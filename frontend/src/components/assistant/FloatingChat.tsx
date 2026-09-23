@@ -1,16 +1,27 @@
-import { Eraser, Loader2, MessageCircleQuestion, Send, X } from "lucide-react";
+import { ArrowLeft, Eraser, Loader2, MessageCircleQuestion, Send, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { useMediaQuery, useVisualViewport } from "@/hooks/useViewport";
 import { api } from "@/lib/api";
 import { resolveThread } from "@/lib/thread";
 import type { ChatMessage } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useAssistant } from "@/stores/assistant";
 
+/**
+ * 全站懸浮問答。
+ *
+ * 桌機（≥ sm）：右下角浮動視窗。
+ * 手機（< sm）：全螢幕面板（一般手機聊天 App 的做法），並處理三個手機才有的問題：
+ *   - 開啟時**不自動聚焦**，否則一點開鍵盤就彈出來擋住紀錄；
+ *     只有從反白「問 AI」進來（帶 context，本來就是要打字）才聚焦。
+ *   - 輸入框字級 16px：iOS 遇到 < 16px 的輸入框會在聚焦時自動放大整頁。
+ *   - 高度跟著 visualViewport：鍵盤彈出時整個面板縮到鍵盤上方，標題列不會被推出畫面。
+ */
 export function FloatingChat() {
   const { pathname } = useLocation();
   const { threadId, videoId, label } = resolveThread(pathname);
@@ -19,7 +30,10 @@ export function FloatingChat() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [question, setQuestion] = useState("");
   const [asking, setAsking] = useState(false);
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+
+  const isMobile = useMediaQuery("(max-width: 639px)");
+  const viewport = useVisualViewport(open && isMobile);
 
   // 換頁 = 換對話串，重新載入該串的紀錄
   useEffect(() => {
@@ -36,9 +50,27 @@ export function FloatingChat() {
     };
   }, [threadId]);
 
+  // 捲訊息區本身，不用 scrollIntoView：後者在手機上會連帶捲動整頁
   useEffect(() => {
-    if (open) bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    const list = listRef.current;
+    if (open && list) list.scrollTo({ top: list.scrollHeight, behavior: "smooth" });
   }, [messages, open, asking]);
+
+  // 鍵盤彈出（可見高度變小）時，維持看得到最新一則
+  useEffect(() => {
+    const list = listRef.current;
+    if (open && isMobile && list) list.scrollTop = list.scrollHeight;
+  }, [open, isMobile, viewport.height]);
+
+  // 手機全螢幕時鎖住背後的頁面，避免手指滑動捲到後面去
+  useEffect(() => {
+    if (!open || !isMobile) return;
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previous;
+    };
+  }, [open, isMobile]);
 
   async function ask() {
     const asked = question.trim();
@@ -99,11 +131,32 @@ export function FloatingChat() {
   return (
     <div
       data-assistant-panel
-      className="glass-strong fixed inset-x-4 bottom-4 z-40 flex flex-col rounded-3xl sm:inset-x-auto sm:right-6 sm:w-[24rem]"
-      style={{ height: "min(32rem, calc(100vh - 6rem))" }}
+      className={cn(
+        "glass-strong fixed flex flex-col",
+        isMobile
+          ? "inset-x-0 top-0 z-50 rounded-none border-0 bg-white/85"
+          : "bottom-4 right-6 z-40 w-[24rem] rounded-3xl",
+      )}
+      style={
+        isMobile
+          ? { height: viewport.height, transform: `translateY(${viewport.offsetTop}px)` }
+          : { height: "min(32rem, calc(100vh - 6rem))" }
+      }
     >
       <div className="flex items-center gap-2 border-b border-white/40 px-4 py-3">
-        <MessageCircleQuestion className="h-5 w-5 text-primary" strokeWidth={1.75} />
+        {isMobile ? (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="-ml-2 shrink-0"
+            onClick={() => setOpen(false)}
+            title="返回"
+          >
+            <ArrowLeft className="h-5 w-5" strokeWidth={1.75} />
+          </Button>
+        ) : (
+          <MessageCircleQuestion className="h-5 w-5 text-primary" strokeWidth={1.75} />
+        )}
         <div className="min-w-0 flex-1">
           <p className="text-sm font-semibold">問 AI</p>
           <p className="truncate text-xs text-muted-foreground">目前對話：{label}</p>
@@ -113,12 +166,17 @@ export function FloatingChat() {
             <Eraser className="h-4 w-4" strokeWidth={1.75} />
           </Button>
         )}
-        <Button variant="ghost" size="icon" onClick={() => setOpen(false)} title="收起">
-          <X className="h-4 w-4" strokeWidth={1.75} />
-        </Button>
+        {!isMobile && (
+          <Button variant="ghost" size="icon" onClick={() => setOpen(false)} title="收起">
+            <X className="h-4 w-4" strokeWidth={1.75} />
+          </Button>
+        )}
       </div>
 
-      <div className="nice-scroll flex-1 space-y-3 overflow-y-auto p-4">
+      <div
+        ref={listRef}
+        className="nice-scroll flex-1 space-y-3 overflow-y-auto overscroll-contain p-4"
+      >
         {messages.length === 0 ? (
           <p className="pt-4 text-center text-sm text-muted-foreground">
             反白畫面上任何文字再按「問 AI」，或直接在下面發問。
@@ -147,7 +205,6 @@ export function FloatingChat() {
             思考中…
           </div>
         )}
-        <div ref={bottomRef} />
       </div>
 
       {context && (
@@ -166,7 +223,9 @@ export function FloatingChat() {
           onChange={(e) => setQuestion(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && !asking && void ask()}
           placeholder="想問什麼？"
-          autoFocus
+          className="text-base sm:text-sm"
+          autoFocus={!isMobile || !!context}
+          enterKeyHint="send"
         />
         <Button variant="gradient" size="icon" onClick={ask} disabled={asking || !question.trim()}>
           {asking ? (
