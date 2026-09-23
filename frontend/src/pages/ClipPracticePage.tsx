@@ -3,12 +3,13 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { toast } from "sonner";
 
+import { AudioCover } from "@/components/AudioCover";
 import { DiffView } from "@/components/DiffView";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
-import { useYouTubePlayer } from "@/hooks/useYouTubePlayer";
+import { useMediaPlayer } from "@/hooks/useMediaPlayer";
 import { api } from "@/lib/api";
 import { formatTime } from "@/lib/format";
 import type { Clip, ClipPractice, Video } from "@/lib/types";
@@ -40,7 +41,7 @@ export function ClipPracticePage() {
   const [history, setHistory] = useState<ClipPractice[]>([]);
   const [rate, setRateState] = useState(1);
 
-  const player = useYouTubePlayer(video?.youtube_id);
+  const player = useMediaPlayer(video);
   const { currentMs, seek, setRate } = player;
 
   useEffect(() => {
@@ -150,7 +151,11 @@ export function ClipPracticePage() {
       <Card className="animate-fade-up overflow-hidden">
         {/* 聽寫時把畫面遮起來，避免看嘴型或字幕作弊 */}
         <div className="relative aspect-video w-full bg-black/80">
-          <div ref={player.containerRef} className="h-full w-full" />
+          {player.isAudio ? (
+            <AudioCover imageUrl={video.thumbnail_url} playing={player.playing} />
+          ) : (
+            <div ref={player.containerRef} className="h-full w-full" />
+          )}
           {mode === "dictation" && !showText && (
             <div className="glass-strong absolute inset-0 flex flex-col items-center justify-center gap-2">
               <Ear className="h-8 w-8 text-primary" strokeWidth={1.75} />

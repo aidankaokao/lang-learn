@@ -139,7 +139,8 @@ def _save_fragments(video_id: int, fragments: list[dict]) -> None:
             )
 
 
-def _save_segments(video_id: int, segments: list[dict]) -> None:
+def _save_segments(video_id: int, segments: list[dict], source: str | None = None) -> None:
+    """source 只在第一次匯入時給；重新斷句不改來源（否則 BBC 會被標成 manual）。"""
     with engine.begin() as conn:
         # 重跑時先清掉舊的，避免重複
         conn.execute(delete(transcript_segments).where(transcript_segments.c.video_id == video_id))
@@ -157,11 +158,10 @@ def _save_segments(video_id: int, segments: list[dict]) -> None:
                     for i, s in enumerate(segments)
                 ],
             )
-        conn.execute(
-            update(videos)
-            .where(videos.c.id == video_id)
-            .values(transcript_status="ready", transcript_source="manual", error_message=None)
-        )
+        values = {"transcript_status": "ready", "error_message": None}
+        if source:
+            values["transcript_source"] = source
+        conn.execute(update(videos).where(videos.c.id == video_id).values(**values))
 
 
 # ── 手動貼上字幕 ────────────────────────────────────────
@@ -260,7 +260,107 @@ def ingest_manual(video_id: int, raw: str) -> int:
     parsed = parse_manual_transcript(raw)
     _save_fragments(video_id, _to_fragments(parsed))
     segments = _merge_into_sentences(parsed)
-    _save_segments(video_id, segments)
+    _save_segments(video_id, segments, source="manual")
+    return len(segments)
+
+
+# ── 已知文字稿 + 語音辨識時間軸（BBC）─────────────────
+# 和手動貼上相反：文字是對的（官方文字稿），缺的是時間。
+# Whisper 給字級時間，但辨識出來的字會有少量出入（OK/Okay、數字、口誤），
+# 所以不能逐字硬對，改用 difflib 找兩串字的最長共同片段，只信任對得上的字。
+
+# 對得上的字低於這個比例，代表音檔和文字稿根本不是同一集，或辨識失敗
+_KNOWN_TEXT_MIN_MATCH = 0.6
+# Whisper 的字級時間常把第一個子音切掉、最後一個字收太快，前後各留一點
+_PAD_BEFORE_MS = 150
+_PAD_AFTER_MS = 300
+
+
+def _align_token(word: str) -> str:
+    # 前後的引號也拿掉：文字稿的 'Same person' 要能對上辨識出來的 same
+    return _normalize_word(word).strip("'")
+
+
+def align_known_text(sentences: list[str], words: list[dict], duration_ms: int = 0) -> list[dict]:
+    """把「文字正確、沒有時間」的句子對到字級時間軸，回傳 [{start_ms, end_ms, text}]。"""
+    from difflib import SequenceMatcher
+
+    tokens: list[tuple[int, str]] = []  # (句子索引, 正規化後的字)
+    for index, sentence in enumerate(sentences):
+        tokens.extend((index, t) for t in (_align_token(w) for w in sentence.split()) if t)
+    heard = [_align_token(w["word"]) for w in words]
+
+    matcher = SequenceMatcher(None, [t for _, t in tokens], heard, autojunk=False)
+    mapped: dict[int, int] = {}  # 文字稿第幾個字 → 辨識結果第幾個字
+    for block in matcher.get_matching_blocks():
+        for k in range(block.size):
+            mapped[block.a + k] = block.b + k
+
+    if not tokens or len(mapped) < len(tokens) * _KNOWN_TEXT_MIN_MATCH:
+        raise ValueError(
+            f"文字稿和音檔對不起來（只對上 {len(mapped)}/{len(tokens)} 個字），"
+            "可能不是同一集，或語音辨識失敗"
+        )
+
+    # 每句取第一個與最後一個對上的字當起訖
+    spans: list[list[int | None]] = [[None, None] for _ in sentences]
+    for token_index, (sentence_index, _) in enumerate(tokens):
+        word_index = mapped.get(token_index)
+        if word_index is None:
+            continue
+        span = spans[sentence_index]
+        if span[0] is None:
+            span[0] = word_index
+        span[1] = word_index
+
+    segments: list[dict] = []
+    for sentence, (first, last) in zip(sentences, spans):
+        segments.append(
+            {
+                "text": sentence.strip(),
+                "start_ms": words[first]["start_ms"] if first is not None else None,
+                "end_ms": words[last]["end_ms"] if last is not None else None,
+            }
+        )
+
+    # 一個字都沒對上的句子（多半很短，例如 "Bye!"）夾在前後句之間
+    for index, segment in enumerate(segments):
+        if segment["start_ms"] is not None:
+            continue
+        prev_end = segments[index - 1]["end_ms"] if index else 0
+        next_start = next(
+            (s["start_ms"] for s in segments[index + 1 :] if s["start_ms"] is not None), None
+        )
+        estimate = max(_MIN_DURATION_MS, len(segment["text"].split()) * _MS_PER_WORD)
+        segment["start_ms"] = prev_end
+        segment["end_ms"] = next_start if next_start is not None else prev_end + estimate
+
+    # 前後留白，但只用句子之間的空檔，不吃到相鄰句子
+    # （段落重疊會讓高亮與 AB 擷取抓錯句，見 DEVELOPMENT-PLAN §9）。空檔先分給前一句的結尾。
+    segments[0]["start_ms"] = max(0, segments[0]["start_ms"] - _PAD_BEFORE_MS)
+    for current, following in zip(segments, segments[1:]):
+        gap = max(0, following["start_ms"] - current["end_ms"])
+        after = min(_PAD_AFTER_MS, gap)
+        current["end_ms"] += after
+        following["start_ms"] -= min(_PAD_BEFORE_MS, gap - after)
+    last = segments[-1]
+    last["end_ms"] += _PAD_AFTER_MS
+    if duration_ms:
+        last["end_ms"] = min(last["end_ms"], max(duration_ms, last["start_ms"] + 1))
+
+    for segment in segments:
+        segment["end_ms"] = max(segment["end_ms"], segment["start_ms"] + 1)
+    return segments
+
+
+def ingest_aligned(video_id: int, segments: list[dict], source: str) -> int:
+    """存入已對好時間的段落，回傳段落數。
+
+    fragments 也存同一份：它們是之後「重新斷句」的時間來源，
+    而這份的時間本身就是字級對齊出來的，比任何內插都準。
+    """
+    _save_fragments(video_id, segments)
+    _save_segments(video_id, segments, source=source)
     return len(segments)
 
 

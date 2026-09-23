@@ -1,7 +1,10 @@
 """影片匯入與文字稿。掛載後路徑為 /api/videos*。
 
-**沒有自動擷取字幕**：YouTube 封鎖雲端 IP，這個服務跑在 Cloud Run 上一定失敗。
+**YouTube 沒有自動擷取字幕**：YouTube 封鎖雲端 IP，這個服務跑在 Cloud Run 上一定失敗。
 匯入後 transcript_status 是 pending，等使用者貼上字幕才變 ready。
+
+**BBC Learning English** 的網址例外：網頁本身有音檔與文字稿，匯入時同步抓完並用
+Whisper 對好時間軸（約 10~40 秒），回應時已是 ready。
 """
 
 from fastapi import APIRouter, Depends, HTTPException

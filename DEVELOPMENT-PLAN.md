@@ -7,7 +7,7 @@
 
 ## 1. 這個專案在做什麼
 
-擷取 YouTube 英文影片內容來學習：
+擷取 YouTube 英文影片（以及 BBC Learning English 的節目音檔）內容來學習：
 
 - **聽力訓練** — 在介面上用 AB 擷取想練的段落，存成「例句」重複練習。
 - **片語管理** — 從文字稿萃取重要片語，含解析、例句、換句話說；可造樣造句由 AI 批改。
@@ -21,6 +21,7 @@
 |---|---|---|
 | 文字稿來源 | **使用者手動貼上**（YouTube「顯示轉錄稿」／SRT／VTT） | YouTube 封鎖所有雲端 IP，自動擷取在 Cloud Run 上一定失敗，留著只會製造必然失敗的按鈕 |
 | 影音播放 | YouTube IFrame Player API | 不下載、不存音檔，Cloud Run 無儲存負擔；代價是**重播依賴原影片還在且需連網** |
+| BBC Learning English | 貼節目網址 → 後端抓網頁的 mp3 連結與文字稿，**Whisper API** 產生字級時間後對上原文字稿；前端 `<audio>` 直接播 BBC 的 mp3 | 文字稿是官方的（比辨識準），只缺時間軸。Whisper 用使用者在設定頁註冊的 OpenAI key，跟著帳號走。音檔一樣不存（詳見 §9「BBC 匯入」） |
 | 帳號 | 帳密 + JWT（`passlib[bcrypt]` / `python-jose`），啟動 seed `admin/admin` | 全開源；admin 可管理其他帳號 |
 | LLM provider | 每個使用者在設定頁各自註冊，`api_key` 以 Fernet 加密存 DB、回前端只給遮罩 | 見 `reference/backend/llm-integration.md` §5 |
 | 資料庫 | SQLAlchemy Core，初期 SQLite → Cloud Run 換 PostgreSQL | 只改 `DATABASE_URL` |
@@ -84,7 +85,7 @@ clips 與 phrases 共用同一組 SRS 欄位（`ease` / `interval_days` / `due_a
 |---|---|
 | `users` | 帳號（`role` = admin / user） |
 | `llm_providers` | 每人各自註冊的 LLM 設定，`api_key_enc` 加密存 |
-| `videos` | 匯入的影片與文字稿狀態（`transcript_status`：pending / ready） |
+| `videos` | 匯入的影片與文字稿狀態（`transcript_status`：pending / ready）。`source`（NULL / youtube / bbc）、`media_url`（BBC mp3）、`page_url`（原頁）。**BBC 的唯一鍵存在 `youtube_id`**（`bbc:<集數>-<路徑雜湊>`），見 §9 |
 | `transcript_fragments` | 貼上字幕時的原始細碎片段，保留時間解析度供重新斷句用 |
 | `transcript_segments` | 逐句文字稿（`idx` / `start_ms` / `end_ms` / `text`） |
 | `clips` | AB 擷取的例句 + SRS 欄位 |
@@ -159,7 +160,7 @@ Skills（`backend/skills/`，各含 `SKILL.md`）：`phrase-extraction`、`sente
 | POST | `/api/settings/llm-providers/{id}/test` | 實際呼叫一次模型測試連線 |
 | DELETE | `/api/settings/llm-providers/{id}` | 刪除（若刪掉的是使用中那筆，自動補上下一筆） |
 | GET | `/api/videos` | 影片列表 |
-| POST | `/api/videos` | 貼網址匯入（回 `transcript_status=pending`，等使用者貼字幕） |
+| POST | `/api/videos` | 貼網址匯入。YouTube 回 `pending`（等使用者貼字幕）；BBC 同步抓音檔＋文字稿＋Whisper 對時間，回 `ready`（10–40 秒） |
 | GET | `/api/videos/{id}` | 單支影片 |
 | GET | `/api/videos/{id}/segments` | 逐句文字稿 |
 | POST | `/api/videos/{id}/transcript` | 手動貼上字幕（SRT／VTT／轉錄稿面板） |
@@ -284,3 +285,44 @@ YouTube **自動字幕是滾動式的**：相鄰片段時間大幅重疊、文�
 > 但**舊影片沒有片段資料**，重新斷句會退回用現有段落內插（時間解析度較差）。
 > 要最佳效果就重新匯入或重貼一次字幕。
 
+
+### BBC 匯入（The English We Speak 等）
+貼 `bbc.co.uk/learningenglish/...` 的節目網址，`POST /api/videos` 會**同步**做完整個流程，成功才寫 DB
+（任何一步失敗都不留半套紀錄，重貼網址即可重試）：
+
+1. `bbc_service.fetch_episode`：抓網頁（標準庫 urllib + re），取 `og:title` / `og:image`、
+   第一個 `downloads.bbc.co.uk/...mp3`、`Transcript` 標題之後到下一個區塊標題之間的 `<p>`。
+   開頭的 `<strong>說話者</strong><br>` 會去掉；單獨一個 `<strong>` 的段落（`Examples`）是小標，略過。
+   每段再依句末標點切成一句一段，彎引號換直引號。
+2. `llm.transcribe_words`：mp3 送 OpenAI **`whisper-1`**（`verbose_json` + 字級時間戳；
+   目前只有 whisper-1 支援字級時間）。音檔只在記憶體裡，不落地。上限 25MB。
+3. `transcript_service.align_known_text`：官方文字稿與辨識結果用 `difflib.SequenceMatcher`
+   找共同片段，只信任對得上的字；每句取第一個與最後一個對上的字當起訖。
+   一個字都沒對上的短句夾在前後句之間。句子之間的空檔拿來做前後留白（結尾 +300ms、開頭 −150ms），
+   **不會讓段落重疊**。對上的字 < 60% 直接報錯（多半是音檔和文字稿不是同一集）。
+4. `ingest_aligned`：fragments 與 segments 存同一份（fragments 仍是「重新斷句」的時間來源），
+   `transcript_source = bbc`。
+
+**Whisper 用哪一組 key**（`llm_provider_service.get_speech_config`）：該使用者的 openai 類型設定中，
+優先 base_url 是 `api.openai.com` 的，其次啟用中的。沒有任何 openai 類型的 key 就提示去設定頁註冊。
+啟用中的 chat model 是 Ollama／vLLM 也沒關係，兩者分開挑。費用約每分鐘 US$0.006，一集幾美分以下。
+
+**為什麼 BBC 的唯一鍵放在 `youtube_id`**：`migrate.py` 只會加欄位，要讓 `youtube_id` 變成可為 NULL
+得整張表重建。所以沿用它當「來源唯一鍵」，靠 `source` 區分；前端**不能**拿 BBC 的 `youtube_id` 組 YouTube 網址
+（外部連結一律用 `page_url`）。
+
+**前端播放器**：`useAudioPlayer` 與 `useYouTubePlayer` 介面相同（`seek` / `loadVideo` / `play` / `pause` /
+`setRate` / 100ms 輪詢的 `currentMs`），`useMediaPlayer(video)` 依 `source` 挑一個，學習頁與聽寫頁不必分來源。
+- `<audio>` 的 `timeupdate` 約 250ms 一次，AB 循環會多播半個字，所以一樣用 100ms 輪詢。
+- iOS 在第一次 `play()` 前可能不載入 metadata，此時設 `currentTime` 會被忽略 →
+  seek 先記在 `pendingRef`，`loadedmetadata` 再套用；`ready` 不等 metadata。總長度在那之前退回用 `videos.duration_sec`。
+- 播放器位置改顯示節目封面（`components/AudioCover`）。
+- **例句庫**的清單可能混著兩種來源，兩個播放器**都常駐**，點哪一筆就用哪一個（另一個先暫停）。
+  YouTube iframe 必須一直看得見，所以播 BBC 時只是用封面蓋住它。
+
+**限制**：
+- 只驗證過 The English We Speak（2026）的頁面格式。其他 BBC Learning English 節目若結構相同也能用，
+  不同就會回「找不到文字稿／音檔」。BBC 改版就要改 `bbc_service` 的 regex。
+- 只從開發機連過 BBC；Cloud Run 的 IP 會不會被擋尚未驗證（音檔在公開下載站，機率比 YouTube 低很多）。
+- 匯入是同步請求，Cloud Run 的請求逾時（預設 300 秒）足夠，但前端會轉圈 10–40 秒。
+- 重播依賴 BBC 的 mp3 連結還在，跟 YouTube 一樣。

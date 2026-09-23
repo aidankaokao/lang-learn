@@ -1,8 +1,17 @@
+import type { MediaSource } from "@/lib/media";
+
 export type TranscriptStatus = "pending" | "ready";
 
 export type Video = {
   id: number;
+  /** YouTube 是影片 ID；BBC 是 "bbc:..." 唯一鍵，不能拿來組 YouTube 網址 */
   youtube_id: string;
+  /** null = 舊資料，視為 youtube */
+  source: MediaSource | null;
+  /** BBC 的 mp3 直連網址 */
+  media_url: string | null;
+  /** 原始頁面（YouTube 觀看頁 / BBC 節目頁）；舊資料為 null */
+  page_url: string | null;
   title: string | null;
   channel: string | null;
   thumbnail_url: string | null;
@@ -101,5 +110,7 @@ export type Clip = {
   created_at: string;
   /** 只有列表 API 會帶 */
   youtube_id?: string;
+  source?: MediaSource | null;
+  media_url?: string | null;
   video_title?: string | null;
 };

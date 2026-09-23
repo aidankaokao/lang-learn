@@ -26,7 +26,7 @@ export function VideosPage() {
   const [savingTranscript, setSavingTranscript] = useState(false);
 
   useEffect(() => {
-    usePageHeader.getState().set("影片庫", "貼上 YouTube 網址，抓取文字稿後開始練習");
+    usePageHeader.getState().set("影片庫", "貼上 YouTube 或 BBC Learning English 網址開始練習");
   }, []);
 
   const reload = useCallback(async () => {
@@ -43,11 +43,18 @@ export function VideosPage() {
     void reload();
   }, [reload]);
 
+  // BBC 匯入時後端要下載音檔並跑 Whisper，會等比較久
+  const isBbcUrl = /bbc\.(co\.uk|com)/i.test(url);
+
   async function importVideo() {
     setImporting(true);
     try {
-      await api.post("/videos", { url });
-      toast.success("已加入，接著按「貼上字幕」匯入轉錄稿");
+      const video = await api.post<Video>("/videos", { url });
+      toast.success(
+        video.transcript_status === "ready"
+          ? "已匯入音檔與文字稿，可以開始學習了"
+          : "已加入，接著按「貼上字幕」匯入轉錄稿",
+      );
       setUrl("");
       await reload();
     } catch (e) {
@@ -92,8 +99,11 @@ export function VideosPage() {
         <CardHeader>
           <CardTitle>加入影片</CardTitle>
           <CardDescription>
-            貼上網址加入後，再用卡片上的<b>「貼上字幕」</b>把 YouTube 的轉錄稿貼進來。
-            （YouTube 封鎖雲端主機的 IP，沒辦法自動抓。）
+            <b>YouTube</b>：加入後再用卡片上的<b>「貼上字幕」</b>把轉錄稿貼進來
+            （YouTube 封鎖雲端主機的 IP，沒辦法自動抓）。
+            <br />
+            <b>BBC Learning English</b>（例如 The English We Speak）：音檔與文字稿會自動匯入，
+            時間軸用你在設定頁註冊的 OpenAI key 跑 Whisper 對齊。
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-wrap items-center gap-3">
@@ -102,12 +112,17 @@ export function VideosPage() {
             value={url}
             onChange={(e) => setUrl(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && url && !importing && void importVideo()}
-            placeholder="https://www.youtube.com/watch?v=..."
+            placeholder="YouTube 或 BBC Learning English 的網址"
           />
           <Button variant="gradient" onClick={importVideo} disabled={importing || !url}>
             {importing ? <Loader2 className="animate-spin" strokeWidth={1.75} /> : <Plus strokeWidth={1.75} />}
             加入
           </Button>
+          {importing && isBbcUrl && (
+            <p className="w-full text-xs text-muted-foreground">
+              正在下載音檔並對齊時間軸，大約需要 10–40 秒…
+            </p>
+          )}
         </CardContent>
       </Card>
 
@@ -118,7 +133,7 @@ export function VideosPage() {
       ) : videos.length === 0 ? (
         <Card className="animate-fade-up">
           <CardContent className="p-12 text-center text-sm text-muted-foreground">
-            還沒有影片，貼一個 YouTube 網址開始吧。
+            還沒有影片，貼一個 YouTube 或 BBC Learning English 網址開始吧。
           </CardContent>
         </Card>
       ) : (
@@ -136,7 +151,20 @@ export function VideosPage() {
 
                 <div className="min-w-0 flex-1">
                   <p className="truncate font-medium">{v.title}</p>
-                  <p className="truncate text-xs text-muted-foreground">{v.channel}</p>
+                  <p className="truncate text-xs text-muted-foreground">
+                    {v.page_url ? (
+                      <a
+                        href={v.page_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="underline-offset-4 hover:text-primary hover:underline"
+                      >
+                        {v.channel ?? "開啟原頁"}
+                      </a>
+                    ) : (
+                      v.channel
+                    )}
+                  </p>
                 </div>
 
                 <div className="flex items-center gap-1">

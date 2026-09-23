@@ -30,7 +30,8 @@
 4. **要資料庫** → SQLAlchemy Core，本機 SQLite → Cloud Run 接 Neon PostgreSQL。
 5. **部署** → Cloud Run 單一容器（`Dockerfile.cloudrun`），GitHub push 自動建置。
 
-其他已確認：文字稿由**使用者手動貼上**（YouTube 封鎖雲端 IP，無法自動擷取）；播放走 **YouTube IFrame Player API**（不下載音檔）；帳號為帳密 JWT，預設管理員 `admin/admin`。
+其他已確認：YouTube 文字稿由**使用者手動貼上**（YouTube 封鎖雲端 IP，無法自動擷取）；播放走 **YouTube IFrame Player API**（不下載音檔）；
+**BBC Learning English** 網址可自動匯入音檔＋文字稿，時間軸用使用者自己的 OpenAI key 跑 **Whisper API** 對齊，前端 `<audio>` 直接播 BBC 的 mp3；帳號為帳密 JWT，預設管理員 `admin/admin`。
 
 <details>
 <summary>原始確認題目（新專案沿用此模板時參考）</summary>
@@ -88,21 +89,25 @@ backend/          FastAPI（python api.py，port 8000，路由一律 /api）
 │                     文字稿是兩層：transcript_fragments（原始細碎片段，保留時間解析度）
 │                     + transcript_segments（合併後給人看／AB 擷取用，會被重新斷句覆寫）
 ├── llm/              get_chat_model()：唯一建構入口，設定從 DB 讀（勿直接 new ChatOpenAI）
+│                     transcribe_words()：Whisper 字級時間（BBC 對時間軸用）
 ├── agents/           LangGraph：phrase_extractor、phrase_coach、dictation_coach、tutor、
 │                     schemas.py（結構化輸出）
 ├── skills/           phrase-extraction/、sentence-grading/、dictation/（各含 SKILL.md）
 ├── services/         商業邏輯（路由薄、service 厚）
-│                     youtube / transcript（手動貼上 + AI 重新斷句）/ video / clip / phrase
+│                     youtube / bbc（BBC 節目頁解析）/ transcript（手動貼上 + AI 重新斷句
+│                     + align_known_text 把已知文字稿對到 Whisper 時間）/ video / clip / phrase
 │                     dictation（difflib 比對，不走 LLM）/ chat / tts（edge-tts 微軟語音）
 │                     srs（間隔重複，phrases 與 clips 共用）/ user / llm_provider
 └── routers/          auth、settings、videos、clips、phrases、chat、tts、admin_users
 
 frontend/         React 18 + TS + Vite，Aurora Glass 風格
 ├── src/lib/          api.ts（唯一 API 入口，帶 JWT）、utils、themes、format、youtube、types
+│                     media.ts（isAudioSource：判斷 YouTube 或 <audio> 來源）
 │                     tts.ts（朗讀，走後端 /api/tts 的微軟 Neural 語音）
 ├── src/hooks/        useYouTubePlayer（IFrame 播放器 + 100ms 輪詢，AB 循環靠它）
+│                     useAudioPlayer（<audio> 版，介面相同）、useMediaPlayer（依 video.source 挑一個）
 │                     usePagination（清單分頁，每頁 5 筆，前端切）
-├── src/components/   Pagination、SearchBox、SpeakButton、DiffView（聽寫比對視覺化）
+├── src/components/   Pagination、SearchBox、SpeakButton、DiffView（聽寫比對視覺化）、AudioCover（純音檔的封面）
 ├── src/stores/       auth（登入狀態）、pageHeader（集中式標題）、assistant（懸浮問答）
 ├── src/components/   ui/（shadcn 風元件）、layout/（Sidebar/Header/AppLayout）
 │                     assistant/（全站懸浮 AI 問答 + 反白工具列）
@@ -142,4 +147,5 @@ npm run dev                 # http://localhost:5173，/api 自動 proxy 到 8000
 - **文字稿的兩層設計**：`transcript_fragments` 是重新斷句的時間來源，寫入後不要覆寫。
 - **手機播放**：必須在使用者手勢的同一個呼叫堆疊裡呼叫播放，且播放器不能隱藏。
   例句庫的播放器因此是常駐的（見 `DEVELOPMENT-PLAN.md` §3）。
+- **BBC 的唯一鍵存在 `videos.youtube_id`**（`bbc:...`）：不能拿它組 YouTube 網址，外部連結用 `page_url`、來源看 `source`。
 - **`JWT_SECRET` 不能改**：加密 LLM API key 的金鑰從它推導，改了已存的 key 會解不開。

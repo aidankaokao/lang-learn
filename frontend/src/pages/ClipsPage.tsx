@@ -3,15 +3,18 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
 
+import { AudioCover } from "@/components/AudioCover";
 import { Pagination } from "@/components/Pagination";
 import { SearchBox } from "@/components/SearchBox";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { useAudioPlayer } from "@/hooks/useAudioPlayer";
 import { usePagination } from "@/hooks/usePagination";
 import { useYouTubePlayer } from "@/hooks/useYouTubePlayer";
 import { api } from "@/lib/api";
 import { formatTime } from "@/lib/format";
+import { isAudioSource } from "@/lib/media";
 import type { Clip } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { usePageHeader } from "@/stores/pageHeader";
@@ -38,9 +41,13 @@ export function ClipsPage() {
   // 播放器**常駐**（不是點下去才建立）：手機要求播放發生在使用者手勢的同一個呼叫堆疊裡，
   // 等點擊後才建立播放器、ready 後再播，會變成有畫面沒聲音。
   // 所以用第一筆例句的影片把播放器先開起來，點擊時只做 loadVideoById。
-  const bootstrapVideoId = clips[0]?.youtube_id;
-  const player = useYouTubePlayer(bootstrapVideoId);
-  const { ready, currentMs, seek, loadVideo } = player;
+  // 清單可能混著 YouTube 與 BBC（純音檔），兩種播放器都各自常駐，播哪一筆就用哪一個。
+  const bootstrapVideoId = clips.find((c) => !isAudioSource(c))?.youtube_id;
+  const bootstrapAudio = clips.find((c) => isAudioSource(c))?.media_url ?? undefined;
+  const youtube = useYouTubePlayer(bootstrapVideoId);
+  const audio = useAudioPlayer(bootstrapAudio);
+  const player = playing && isAudioSource(playing) ? audio : youtube;
+  const { ready, currentMs, seek } = player;
 
   useEffect(() => {
     usePageHeader.getState().set("例句庫", "點播放就會一直循環，適合塞著耳機重複聽");
@@ -72,9 +79,15 @@ export function ClipsPage() {
       setPlaying(null);
       return;
     }
-    if (!clip.youtube_id) return;
-    // 這一行必須同步發生在點擊事件裡，手機才會給播放權限
-    loadVideo(clip.youtube_id, clip.start_ms);
+    // 下面的 loadVideo 必須同步發生在點擊事件裡，手機才會給播放權限
+    if (isAudioSource(clip)) {
+      youtube.pause();
+      audio.loadVideo(clip.media_url!, clip.start_ms);
+    } else {
+      if (!clip.youtube_id) return;
+      audio.pause();
+      youtube.loadVideo(clip.youtube_id, clip.start_ms);
+    }
     setPlaying(clip);
   }
 
@@ -145,7 +158,18 @@ export function ClipsPage() {
       <Card className="animate-fade-up sticky top-0 z-10">
         <CardContent className="flex items-center gap-4 p-4">
           <div className="aspect-video w-24 shrink-0 overflow-hidden rounded-xl bg-black/80 sm:w-32">
-            <div ref={player.containerRef} className="h-full w-full" />
+            {/* YouTube 的 iframe 必須一直看得見，所以只要清單裡有 YouTube 例句就一直掛著；
+                正在播 BBC 時用封面蓋住它 */}
+            <div className="relative h-full w-full">
+              {bootstrapVideoId && <div ref={youtube.containerRef} className="h-full w-full" />}
+              {(!bootstrapVideoId || (playing && isAudioSource(playing))) && (
+                <AudioCover
+                  className="absolute inset-0"
+                  imageUrl={null}
+                  playing={!!playing && audio.playing}
+                />
+              )}
+            </div>
           </div>
 
           {playing ? (

@@ -17,10 +17,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { toast } from "sonner";
 
+import { AudioCover } from "@/components/AudioCover";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { useYouTubePlayer } from "@/hooks/useYouTubePlayer";
+import { useMediaPlayer } from "@/hooks/useMediaPlayer";
 import { api } from "@/lib/api";
 import { formatTime } from "@/lib/format";
 import type { Clip, PhraseCandidate, Segment, Video } from "@/lib/types";
@@ -62,7 +63,7 @@ export function StudyPage() {
   const [clipsOpen, setClipsOpen] = useState(false);
   const [phrasesOpen, setPhrasesOpen] = useState(false);
 
-  const player = useYouTubePlayer(video?.youtube_id);
+  const player = useMediaPlayer(video);
   const { currentMs, seek, play, pause, playing, setRate } = player;
   const segmentRefs = useRef<Record<number, HTMLDivElement | null>>({});
 
@@ -297,8 +298,12 @@ export function StudyPage() {
         <div className="space-y-6">
           <Card className="animate-fade-up overflow-hidden">
             <div className="aspect-video w-full bg-black/80">
-              {/* useYouTubePlayer 會把這個 div 換成 iframe */}
-              <div ref={player.containerRef} className="h-full w-full" />
+              {player.isAudio ? (
+                <AudioCover imageUrl={video.thumbnail_url} playing={playing} />
+              ) : (
+                /* useYouTubePlayer 會把這個 div 換成 iframe */
+                <div ref={player.containerRef} className="h-full w-full" />
+              )}
             </div>
 
             {player.error && (
@@ -309,7 +314,10 @@ export function StudyPage() {
               {/* 時間軸資訊 */}
               <div className="flex items-center justify-between text-sm">
                 <span className="font-mono">{formatTime(currentMs)}</span>
-                <span className="text-muted-foreground">{formatTime(player.durationMs)}</span>
+                <span className="text-muted-foreground">
+                  {/* 手機的 <audio> 在按播放前可能還沒讀到長度，先用匯入時存的 */}
+                  {formatTime(player.durationMs || (video.duration_sec ?? 0) * 1000)}
+                </span>
               </div>
 
               {/* AB 設定 */}

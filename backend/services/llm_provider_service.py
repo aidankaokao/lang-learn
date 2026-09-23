@@ -86,6 +86,41 @@ def get_active_config(user_id: int, provider_id: int | None = None) -> dict:
     return cfg
 
 
+def get_speech_config(user_id: int) -> dict:
+    """給語音轉文字（Whisper）用：回傳含**明文 api_key** 的 OpenAI 設定。
+
+    Whisper 不是 chat model，只有 OpenAI 本家有，所以不能直接拿 active 那筆
+    （active 可能是 Ollama 或 vLLM）。挑選順序：
+      1. 啟用中且 base_url 是 api.openai.com
+      2. 其他 base_url 是 api.openai.com 且有 key 的
+      3. 任何有 key 的 openai 類型（相容 OpenAI 音訊 API 的代理）
+    """
+    with engine.connect() as conn:
+        rows = conn.execute(
+            select(llm_providers)
+            .where(
+                llm_providers.c.user_id == user_id,
+                llm_providers.c.provider == "openai",
+                llm_providers.c.api_key_enc.is_not(None),
+            )
+            .order_by(llm_providers.c.created_at)
+        ).all()
+
+    def rank(row) -> tuple[int, int]:
+        official = "api.openai.com" in row._mapping["base_url"]
+        return (0 if official else 1, 0 if row._mapping["is_active"] else 1)
+
+    if not rows:
+        raise ValueError(
+            "語音對時間軸要用 OpenAI 的 Whisper，請先到「設定」頁註冊一組 OpenAI"
+            "（base_url 用 https://api.openai.com/v1）"
+        )
+
+    cfg = dict(min(rows, key=rank)._mapping)
+    cfg["api_key"] = decrypt(cfg.pop("api_key_enc") or "")
+    return cfg
+
+
 # ── 新增 / 修改 / 刪除 ──────────────────────────────────
 def create_provider(
     user_id: int,

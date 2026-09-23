@@ -67,14 +67,19 @@ videos = Table(
     metadata,
     Column("id", Integer, primary_key=True, autoincrement=True),
     Column("user_id", Integer, ForeignKey("users.id"), nullable=False),
+    # 來源的唯一鍵。YouTube 是 11 碼影片 ID；BBC 存 "bbc:<集數代號>"（例 bbc:ep-260921）。
+    # 欄名沿用 youtube_id 是為了不必重建表（migrate 只會加欄位，改 NOT NULL 得整張重建）。
     Column("youtube_id", String(32), nullable=False),
+    Column("source", String(16), nullable=True),  # NULL / youtube = YouTube；bbc = BBC Learning English
+    Column("media_url", String(500), nullable=True),  # 非 YouTube 來源的音檔直連網址（前端 <audio> 直接播）
+    Column("page_url", String(500), nullable=True),  # 原始頁面網址（給「開啟原頁」用）
     Column("title", String(500), nullable=True),
     Column("channel", String(255), nullable=True),
     Column("duration_sec", Integer, nullable=True),
     Column("thumbnail_url", String(500), nullable=True),
     # pending = 還沒貼字幕；ready = 可以開始學習
     Column("transcript_status", String(16), nullable=False, server_default="pending"),
-    Column("transcript_source", String(16), nullable=True),  # 目前只有 manual
+    Column("transcript_source", String(16), nullable=True),  # manual | bbc
     Column("error_message", Text, nullable=True),
     Column("created_at", DateTime(timezone=True), server_default=func.now()),
     UniqueConstraint("user_id", "youtube_id", name="uq_videos_user_youtube"),

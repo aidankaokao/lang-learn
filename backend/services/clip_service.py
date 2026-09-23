@@ -55,6 +55,8 @@ def list_clips(user_id: int, video_id: int | None = None) -> list[dict]:
         select(
             clips,
             videos.c.youtube_id,
+            videos.c.source,
+            videos.c.media_url,
             videos.c.title.label("video_title"),
         )
         .select_from(clips)

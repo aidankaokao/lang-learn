@@ -23,6 +23,7 @@ langchain-core>=0.3
 
 # ── LLM 串接（見 llm-integration.md）──
 langchain-openai>=0.2      # ChatOpenAI（外部 OpenAI / 本地 vLLM）
+openai>=1.40               # Whisper 語音轉文字（BBC 音檔對時間軸）；langchain-openai 已依賴它
 langchain-ollama>=0.2      # ChatOllama（本地 Ollama）
 
 # 註：不需要 youtube-transcript-api / yt-dlp。
