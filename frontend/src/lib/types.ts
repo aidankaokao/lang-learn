@@ -88,7 +88,16 @@ export type ChatMessage = {
   role: "user" | "assistant";
   content: string;
   created_at: string;
+  /** 前端專用：這則回答還在串流中 */
+  streaming?: boolean;
 };
+
+/** POST /api/chat/stream 的 SSE 事件 */
+export type ChatStreamEvent =
+  | { type: "status"; text: string }
+  | { type: "delta"; text: string }
+  | { type: "error"; message: string }
+  | { type: "done" };
 
 export type ReviewQueue = {
   phrases: Phrase[];

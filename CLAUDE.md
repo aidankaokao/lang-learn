@@ -108,11 +108,13 @@ frontend/         React 18 + TS + Vite，Aurora Glass 風格
 │                     useAudioPlayer（<audio> 版，介面相同）、useMediaPlayer（依 video.source 挑一個）
 │                     usePagination（清單分頁，每頁 5 筆，前端切）
 │                     useViewport（useMediaQuery / useVisualViewport：手機鍵盤彈出後的可見高度）
+│                     useSmoothText（串流文字的 smooth streaming 節奏）
 ├── src/components/   Pagination、SearchBox、SpeakButton、DiffView（聽寫比對視覺化）、AudioCover（純音檔的封面）
 ├── src/stores/       auth（登入狀態）、pageHeader（集中式標題）、assistant（懸浮問答）
 ├── src/components/   ui/（shadcn 風元件）、layout/（Sidebar 桌機側欄 / MobileMenu 手機頂部下拉 /
 │                     Header / AppLayout；導覽項目共用 Sidebar.tsx 的 NAV_SECTIONS）
-│                     assistant/（全站懸浮 AI 問答 + 反白工具列；手機是全螢幕面板）
+│                     assistant/（全站懸浮 AI 問答 + 反白工具列；手機是全螢幕面板；
+│                     回答走 SSE 串流，ChatMarkdown 負責 Markdown 渲染 + 逐 token 淡入）
 └── src/pages/        Login、Dashboard、Videos、Study（核心）、Clips、ClipPractice（聽寫）、
                       Phrases、Settings、AdminUsers
 ```

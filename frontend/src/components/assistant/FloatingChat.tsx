@@ -8,9 +8,14 @@ import { Input } from "@/components/ui/input";
 import { useMediaQuery, useVisualViewport } from "@/hooks/useViewport";
 import { api } from "@/lib/api";
 import { resolveThread } from "@/lib/thread";
-import type { ChatMessage } from "@/lib/types";
+import type { ChatMessage, ChatStreamEvent } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useAssistant } from "@/stores/assistant";
+
+import { ChatMarkdown } from "./ChatMarkdown";
+
+// 離底部多近算「正在看最新訊息」：是的話新內容長出來就自動跟著捲
+const STICK_THRESHOLD_PX = 48;
 
 /**
  * 全站懸浮問答。
@@ -21,6 +26,8 @@ import { useAssistant } from "@/stores/assistant";
  *     只有從反白「問 AI」進來（帶 context，本來就是要打字）才聚焦。
  *   - 輸入框字級 16px：iOS 遇到 < 16px 的輸入框會在聚焦時自動放大整頁。
  *   - 高度跟著 visualViewport：鍵盤彈出時整個面板縮到鍵盤上方，標題列不會被推出畫面。
+ *
+ * 回答走 SSE 串流（POST /api/chat/stream），顯示交給 ChatMarkdown（smooth streaming + 淡入 + Markdown）。
  */
 export function FloatingChat() {
   const { pathname } = useLocation();
@@ -30,7 +37,11 @@ export function FloatingChat() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [question, setQuestion] = useState("");
   const [asking, setAsking] = useState(false);
+  // 工具執行中（例如查文字稿）還沒有文字可顯示時的狀態說明
+  const [status, setStatus] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const stickRef = useRef(true);
 
   const isMobile = useMediaQuery("(max-width: 639px)");
   const viewport = useVisualViewport(open && isMobile);
@@ -50,16 +61,35 @@ export function FloatingChat() {
     };
   }, [threadId]);
 
-  // 捲訊息區本身，不用 scrollIntoView：後者在手機上會連帶捲動整頁
+  // 自動捲到底：串流時文字是 ChatMarkdown 內部一點一點長出來的，messages 不一定有變，
+  // 所以改用 ResizeObserver 盯內容高度。使用者往上捲去看舊訊息時（離底部遠）就不打擾他。
+  // 捲的是訊息區本身，不用 scrollIntoView：後者在手機上會連帶捲動整頁。
   useEffect(() => {
     const list = listRef.current;
-    if (open && list) list.scrollTo({ top: list.scrollHeight, behavior: "smooth" });
-  }, [messages, open, asking]);
+    const content = contentRef.current;
+    if (!open || !list || !content) return;
+
+    const onScroll = () => {
+      stickRef.current = list.scrollHeight - list.scrollTop - list.clientHeight < STICK_THRESHOLD_PX;
+    };
+    const observer = new ResizeObserver(() => {
+      if (stickRef.current) list.scrollTop = list.scrollHeight;
+    });
+
+    stickRef.current = true;
+    list.scrollTop = list.scrollHeight;
+    list.addEventListener("scroll", onScroll);
+    observer.observe(content);
+    return () => {
+      list.removeEventListener("scroll", onScroll);
+      observer.disconnect();
+    };
+  }, [open]);
 
   // 鍵盤彈出（可見高度變小）時，維持看得到最新一則
   useEffect(() => {
     const list = listRef.current;
-    if (open && isMobile && list) list.scrollTop = list.scrollHeight;
+    if (open && isMobile && list && stickRef.current) list.scrollTop = list.scrollHeight;
   }, [open, isMobile, viewport.height]);
 
   // 手機全螢幕時鎖住背後的頁面，避免手指滑動捲到後面去
@@ -77,25 +107,45 @@ export function FloatingChat() {
     if (!asked) return;
 
     setAsking(true);
-    // 先把問題放上去，答案回來再補，避免等待期間畫面沒反應
-    setMessages((prev) => [...prev, { id: Date.now(), role: "user", content: asked, created_at: "" }]);
+    setStatus(null);
+    stickRef.current = true; // 自己剛發問，一定要看到回答
+    // 問題與「空的回答」先放上去，串流進來的文字再一段段補進那則回答
+    const answerId = Date.now() + 1;
+    setMessages((prev) => [
+      ...prev,
+      { id: Date.now(), role: "user", content: asked, created_at: "" },
+      { id: answerId, role: "assistant", content: "", created_at: "", streaming: true },
+    ]);
     setQuestion("");
 
+    const updateAnswer = (change: (m: ChatMessage) => ChatMessage) =>
+      setMessages((prev) => prev.map((m) => (m.id === answerId ? change(m) : m)));
+
     try {
-      const res = await api.post<{ answer: string }>("/chat", {
-        thread_id: threadId,
-        question: asked,
-        video_id: videoId,
-        context: context || undefined,
-      });
-      setMessages((prev) => [
-        ...prev,
-        { id: Date.now() + 1, role: "assistant", content: res.answer, created_at: "" },
-      ]);
+      await api.stream<ChatStreamEvent>(
+        "/chat/stream",
+        {
+          thread_id: threadId,
+          question: asked,
+          video_id: videoId,
+          context: context || undefined,
+        },
+        (event) => {
+          if (event.type === "status") setStatus(event.text);
+          else if (event.type === "delta") {
+            setStatus(null);
+            updateAnswer((m) => ({ ...m, content: m.content + event.text }));
+          } else if (event.type === "error") throw new Error(event.message);
+        },
+      );
       setContext("");
     } catch (e) {
       toast.error((e as Error).message);
+      // 失敗時後端不會存這一輪；畫面上的空回答拿掉，已經出來的部分留著給使用者看
+      setMessages((prev) => prev.filter((m) => m.id !== answerId || m.content));
     } finally {
+      updateAnswer((m) => ({ ...m, streaming: false }));
+      setStatus(null);
       setAsking(false);
     }
   }
@@ -173,38 +223,44 @@ export function FloatingChat() {
         )}
       </div>
 
-      <div
-        ref={listRef}
-        className="nice-scroll flex-1 space-y-3 overflow-y-auto overscroll-contain p-4"
-      >
-        {messages.length === 0 ? (
-          <p className="pt-4 text-center text-sm text-muted-foreground">
-            反白畫面上任何文字再按「問 AI」，或直接在下面發問。
-            <br />
-            在影片頁發問時，它查得到那支影片的文字稿。
-          </p>
-        ) : (
-          messages.map((message) => (
-            <div
-              key={message.id}
-              className={cn(
-                "rounded-2xl px-3 py-2 text-sm leading-relaxed",
-                message.role === "user"
-                  ? "bg-brand-tint ml-6"
-                  : "glass-soft mr-6 whitespace-pre-wrap",
-              )}
-            >
-              {message.content}
-            </div>
-          ))
-        )}
+      <div ref={listRef} className="nice-scroll flex-1 overflow-y-auto overscroll-contain p-4">
+        <div ref={contentRef} className="space-y-3">
+          {messages.length === 0 ? (
+            <p className="pt-4 text-center text-sm text-muted-foreground">
+              反白畫面上任何文字再按「問 AI」，或直接在下面發問。
+              <br />
+              在影片頁發問時，它查得到那支影片的文字稿。
+            </p>
+          ) : (
+            messages.map((message) =>
+              // 串流中還沒收到字的回答先不畫，由下面的「思考中」頂著
+              message.role === "assistant" && !message.content ? null : (
+                <div
+                  key={message.id}
+                  className={cn(
+                    "rounded-2xl px-3 py-2 text-sm leading-relaxed",
+                    message.role === "user"
+                      ? "bg-brand-tint ml-6 whitespace-pre-wrap"
+                      : "glass-soft mr-6",
+                  )}
+                >
+                  {message.role === "assistant" ? (
+                    <ChatMarkdown text={message.content} streaming={message.streaming} />
+                  ) : (
+                    message.content
+                  )}
+                </div>
+              ),
+            )
+          )}
 
-        {asking && (
-          <div className="glass-soft mr-6 flex items-center gap-2 rounded-2xl px-3 py-2 text-sm text-muted-foreground">
-            <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.75} />
-            思考中…
-          </div>
-        )}
+          {asking && (status || !messages[messages.length - 1]?.content) && (
+            <div className="glass-soft mr-6 flex items-center gap-2 rounded-2xl px-3 py-2 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.75} />
+              {status ?? "思考中…"}
+            </div>
+          )}
+        </div>
       </div>
 
       {context && (

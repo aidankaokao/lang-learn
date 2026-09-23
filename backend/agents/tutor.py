@@ -9,7 +9,9 @@ tool 需要知道「是誰、在看哪支影片」，所以用 closure 在每次
 
 from typing import Annotated, TypedDict
 
-from langchain_core.messages import AnyMessage, SystemMessage
+from collections.abc import Iterator
+
+from langchain_core.messages import AIMessageChunk, AnyMessage, SystemMessage
 from langchain_core.tools import tool
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
@@ -103,3 +105,60 @@ def ask(
     messages = [*history, ("user", question)]
     result = graph.invoke({"messages": messages})
     return str(result["messages"][-1].content).strip()
+
+
+# 串流時工具執行期間沒有文字可送，改送狀態讓前端顯示「在做什麼」
+_TOOL_STATUS = {
+    "search_transcript": "查文字稿中…",
+    "list_my_phrases": "翻你的片語庫中…",
+    "save_phrase": "收藏片語中…",
+}
+
+
+def _chunk_text(chunk: AIMessageChunk) -> str:
+    """content 可能是字串，也可能是 content blocks（部分 provider），只取文字。"""
+    content = chunk.content
+    if isinstance(content, str):
+        return content
+    return "".join(
+        block.get("text", "")
+        for block in content
+        if isinstance(block, dict) and block.get("type") == "text"
+    )
+
+
+def stream(
+    user_id: int,
+    video_id: int | None,
+    history: list[tuple[str, str]],
+    question: str,
+    context: str = "",
+) -> Iterator[dict]:
+    """逐段產出事件：{"type": "status", "text"} 或 {"type": "delta", "text"}。
+
+    用 stream_mode="messages"：node 裡照樣寫 llm.invoke，LangGraph 會透過 callback
+    把 LLM 的 token 一段段送出來，不必改圖的結構。
+    模型在呼叫工具前後可能各講一段話（兩個不同的 AI message），中間補空行分段。
+    """
+    graph = build_graph(user_id, video_id, context)
+    messages = [*history, ("user", question)]
+
+    current_id: str | None = None
+    has_text = False
+    for chunk, metadata in graph.stream({"messages": messages}, stream_mode="messages"):
+        if metadata.get("langgraph_node") != "agent" or not isinstance(chunk, AIMessageChunk):
+            continue  # tools node 的輸出（ToolMessage）不給使用者看
+
+        for call in chunk.tool_call_chunks or []:
+            if call.get("name"):
+                yield {"type": "status", "text": _TOOL_STATUS.get(call["name"], "查資料中…")}
+
+        text = _chunk_text(chunk)
+        if not text:
+            continue
+        if chunk.id != current_id:
+            if has_text:
+                yield {"type": "delta", "text": "\n\n"}
+            current_id = chunk.id
+        has_text = True
+        yield {"type": "delta", "text": text}

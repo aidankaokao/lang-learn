@@ -135,6 +135,30 @@ tool 用 closure 綁死 `user_id` / `video_id`，LLM 沒有機會存取別人的
   - 開啟時鎖住 `body` 捲動、訊息區 `overscroll-contain`，手指滑動不會捲到背後的頁面。
   - 手機左上是「← 返回」（取代右上 ✕），輸入框 `enterKeyHint="send"` 讓鍵盤的 Enter 顯示「傳送」。
 
+#### 串流回答（smooth streaming + Markdown）
+回答不是一個字一個字敲出來（打字機效果），而是**一小批一小批淡入**（業界叫 smooth streaming / fade-in streaming）。
+
+- **後端**：`tutor.stream()` 用 LangGraph `stream_mode="messages"` 取 agent node 的 token
+  （node 裡照樣 `llm.invoke`，LangGraph 透過 callback 把 token 串出來，圖不用改）。
+  - 模型決定呼叫工具時送 `status`（「查文字稿中…」等），工具的輸出不給使用者看。
+  - 模型在呼叫工具前後各講一段話是兩個不同的 AI message，中間補空行。
+  - `chat_service.ask_stream` 先驗證再回 generator，所以輸入錯誤仍是一般 400；**整段成功才存 DB**，
+    中途失敗送 `error` 事件、這一輪不存。存進去的是「所有串流出來的文字」，重新整理後看到的跟當下一致。
+  - `routers/chat.py` 用 `StreamingResponse`（`text/event-stream`，加 `X-Accel-Buffering: no`）。
+    內網版 nginx 本來就有 `proxy_buffering off`；Cloud Run 原生支援串流，不用改設定。
+- **前端接收**：`api.stream()` 用 `fetch` 讀 `ReadableStream` 解析 SSE（`EventSource` 只能 GET、不能帶 JWT）。
+- **前端顯示**（`components/assistant/ChatMarkdown.tsx`）：
+  1. `hooks/useSmoothText`：收到的字先緩衝，每 40ms 放出一批 token；積壓越多每批越大，畫面最多落後約 0.4 秒。
+     token 是「英文一個單字」或「中文一個字」（中文沒有空白可切）。
+  2. `react-markdown` + `remark-gfm` 渲染（粗體、清單、表格…），樣式在 `index.css` 的 `.chat-markdown`
+     （沒裝 typography 外掛）。
+  3. 自寫的 rehype 外掛把每個 token 包成 `<span class="fade-token">`，CSS 讓它掛載時淡入。
+     文字變長時舊 span 被 React 沿用、不會重播動畫，只有新 token 淡入。
+     Markdown 結構在串流中途改變（例如 `**粗` 補齊成粗體）時，那一小段會重淡入一次，可接受。
+  4. 歷史紀錄不包 span、不播動畫；`prefers-reduced-motion` 時關閉淡入。
+- **自動捲動**：串流時文字是 ChatMarkdown 內部慢慢長出來的，所以用 `ResizeObserver` 盯內容高度；
+  使用者往上捲去看舊訊息時（離底部 > 48px）不強制拉回。
+
 Skills（`backend/skills/`，各含 `SKILL.md`）：`phrase-extraction`、`sentence-grading`、`dictation`。
 
 **SRS 排程規則只有一份**：`services/srs_service.py`（SM-2 精簡版），phrases 與 clips 共用。
@@ -195,7 +219,8 @@ Skills（`backend/skills/`，各含 `SKILL.md`）：`phrase-extraction`、`sente
 | POST | `/api/clips/{id}/dictation` | 聽寫批改：difflib 正確率 + LLM 解釋 + 更新 SRS |
 | POST | `/api/clips/{id}/review` | 跟讀自評（`quality`），只更新排程 |
 | GET | `/api/chat?thread_id=` | 某條對話串的問答紀錄 |
-| POST | `/api/chat` | 問 tutor（可帶 `video_id` 與反白的 `context`） |
+| POST | `/api/chat` | 問 tutor（可帶 `video_id` 與反白的 `context`），一次回完整答案（前端已改用串流版） |
+| POST | `/api/chat/stream` | 同上，**SSE 串流**：事件 `status`（工具執行中）／`delta`（文字片段）／`error`／`done` |
 | DELETE | `/api/chat?thread_id=` | 清空該對話串 |
 | GET | `/api/admin/users` | 列出所有帳號（admin） |
 | POST | `/api/admin/users` | 建立帳號（admin） |

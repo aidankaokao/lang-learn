@@ -61,6 +61,46 @@ async function requestBlob(path: string, body?: unknown): Promise<Blob> {
   return res.blob();
 }
 
+/**
+ * 讀 SSE 串流（後端 StreamingResponse 的 `data: {json}\n\n`），每個事件呼叫一次 onEvent。
+ * 不用 EventSource：它只能 GET、不能帶 Authorization header。
+ * onEvent 丟出的錯誤會中止讀取並往外拋，呼叫端一個 try/catch 就能處理。
+ */
+async function requestStream<E>(path: string, body: unknown, onEvent: (event: E) => void) {
+  const res = await fetch(`${BASE}${path}`, {
+    method: "POST",
+    headers: buildHeaders(),
+    body: JSON.stringify(body ?? {}),
+  });
+  await ensureOk(res);
+  if (!res.body) throw new Error("瀏覽器不支援串流回應");
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      // 一個事件以空行結尾；最後一段可能還沒收完，留在 buffer 等下一批
+      const events = buffer.split("\n\n");
+      buffer = events.pop() ?? "";
+      for (const raw of events) {
+        const data = raw
+          .split("\n")
+          .filter((line) => line.startsWith("data:"))
+          .map((line) => line.slice(5).trimStart())
+          .join("\n");
+        if (data) onEvent(JSON.parse(data) as E);
+      }
+    }
+  } finally {
+    reader.cancel().catch(() => undefined);
+  }
+}
+
 export const api = {
   get: <T>(p: string) => request<T>(`/api${p}`),
   post: <T>(p: string, body?: unknown) =>
@@ -71,4 +111,6 @@ export const api = {
     request<T>(`/api${p}`, { method: "PUT", body: JSON.stringify(body ?? {}) }),
   del: <T>(p: string) => request<T>(`/api${p}`, { method: "DELETE" }),
   blob: (p: string, body?: unknown) => requestBlob(`/api${p}`, body),
+  stream: <E>(p: string, body: unknown, onEvent: (event: E) => void) =>
+    requestStream<E>(`/api${p}`, body, onEvent),
 };
