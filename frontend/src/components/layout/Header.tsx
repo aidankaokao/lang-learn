@@ -1,4 +1,4 @@
-import { LogOut, Menu, PanelLeftClose, PanelLeftOpen } from "lucide-react";
+import { LogOut, Menu, PanelLeftClose, PanelLeftOpen, X } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -8,11 +8,13 @@ import { usePageHeader } from "@/stores/pageHeader";
 export function Header({
   collapsed,
   onToggle,
-  onOpenDrawer,
+  menuOpen,
+  onToggleMenu,
 }: {
   collapsed: boolean;
   onToggle: () => void;
-  onOpenDrawer: () => void;
+  menuOpen: boolean;
+  onToggleMenu: () => void;
 }) {
   const { title, subtitle } = usePageHeader();
   const user = useAuth((s) => s.user);
@@ -20,9 +22,20 @@ export function Header({
 
   return (
     <header className="glass flex h-14 shrink-0 items-center gap-3 border-b px-3 sm:px-4">
-      {/* 手機：開抽屜 */}
-      <Button variant="ghost" size="icon" className="lg:hidden" onClick={onOpenDrawer} title="開啟選單">
-        <Menu className="h-5 w-5" strokeWidth={1.75} />
+      {/* 手機：開關下拉選單 */}
+      <Button
+        variant="ghost"
+        size="icon"
+        className="lg:hidden"
+        onClick={onToggleMenu}
+        title={menuOpen ? "關閉選單" : "開啟選單"}
+        aria-expanded={menuOpen}
+      >
+        {menuOpen ? (
+          <X className="h-5 w-5" strokeWidth={1.75} />
+        ) : (
+          <Menu className="h-5 w-5" strokeWidth={1.75} />
+        )}
       </Button>
 
       {/* 桌機：折疊側邊欄 */}

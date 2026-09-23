@@ -109,7 +109,8 @@ frontend/         React 18 + TS + Vite，Aurora Glass 風格
 │                     usePagination（清單分頁，每頁 5 筆，前端切）
 ├── src/components/   Pagination、SearchBox、SpeakButton、DiffView（聽寫比對視覺化）、AudioCover（純音檔的封面）
 ├── src/stores/       auth（登入狀態）、pageHeader（集中式標題）、assistant（懸浮問答）
-├── src/components/   ui/（shadcn 風元件）、layout/（Sidebar/Header/AppLayout）
+├── src/components/   ui/（shadcn 風元件）、layout/（Sidebar 桌機側欄 / MobileMenu 手機頂部下拉 /
+│                     Header / AppLayout；導覽項目共用 Sidebar.tsx 的 NAV_SECTIONS）
 │                     assistant/（全站懸浮 AI 問答 + 反白工具列）
 └── src/pages/        Login、Dashboard、Videos、Study（核心）、Clips、ClipPractice（聽寫）、
                       Phrases、Settings、AdminUsers

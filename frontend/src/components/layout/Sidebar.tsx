@@ -20,7 +20,8 @@ const COLLAPSED_W = 64;
 
 type NavItem = { to: string; label: string; icon: typeof LayoutDashboard; adminOnly?: boolean };
 
-const SECTIONS: { title: string; items: NavItem[] }[] = [
+/** 導覽項目只有這一份，桌機側邊欄與手機下拉選單（MobileMenu）共用。 */
+export const NAV_SECTIONS: { title: string; items: NavItem[] }[] = [
   {
     title: "學習",
     items: [
@@ -39,16 +40,11 @@ const SECTIONS: { title: string; items: NavItem[] }[] = [
   },
 ];
 
-/**
- * mobile=true 時是手機版抽屜：固定寬度、不可折疊、不可拖曳。
- * 桌機版才有折疊與拖曳調寬。
- */
-export function Sidebar({ collapsed, mobile = false }: { collapsed: boolean; mobile?: boolean }) {
+/** 桌機（≥ lg）專用：可折疊、可拖曳調寬。手機改用 Header 下方的下拉選單（MobileMenu）。 */
+export function Sidebar({ collapsed: isCollapsed }: { collapsed: boolean }) {
   const role = useAuth((s) => s.user?.role);
   const [width, setWidth] = useState(() => Number(localStorage.getItem(WIDTH_KEY)) || 240);
   const dragging = useRef(false);
-
-  const isCollapsed = collapsed && !mobile;
 
   // 拖曳改寬度：監聽掛在 window，滑鼠移出感應區也不會斷
   useEffect(() => {
@@ -73,7 +69,7 @@ export function Sidebar({ collapsed, mobile = false }: { collapsed: boolean; mob
   return (
     <aside
       className="glass relative flex h-full shrink-0 flex-col border-r transition-[width] duration-200"
-      style={{ width: mobile ? 264 : isCollapsed ? COLLAPSED_W : width }}
+      style={{ width: isCollapsed ? COLLAPSED_W : width }}
     >
       {/* 品牌區 */}
       <div className="flex h-14 items-center gap-3 px-4">
@@ -86,7 +82,7 @@ export function Sidebar({ collapsed, mobile = false }: { collapsed: boolean; mob
       </div>
 
       <nav className="nice-scroll flex-1 space-y-6 overflow-y-auto px-3 py-4">
-        {SECTIONS.map((section) => {
+        {NAV_SECTIONS.map((section) => {
           const items = section.items.filter((i) => !i.adminOnly || role === "admin");
           if (items.length === 0) return null;
           return (
@@ -121,8 +117,8 @@ export function Sidebar({ collapsed, mobile = false }: { collapsed: boolean; mob
         })}
       </nav>
 
-      {/* 拖曳感應區：隱形直條，hover / 拖曳中才顯色（手機沒有滑鼠，不提供） */}
-      {!isCollapsed && !mobile && (
+      {/* 拖曳感應區：隱形直條，hover / 拖曳中才顯色 */}
+      {!isCollapsed && (
         <div
           onMouseDown={() => {
             dragging.current = true;
