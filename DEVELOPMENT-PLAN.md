@@ -158,6 +158,9 @@ tool 用 closure 綁死 `user_id` / `video_id`，LLM 沒有機會存取別人的
   4. 歷史紀錄不包 span、不播動畫；`prefers-reduced-motion` 時關閉淡入。
 - **自動捲動**：串流時文字是 ChatMarkdown 內部慢慢長出來的，所以用 `ResizeObserver` 盯內容高度；
   使用者往上捲去看舊訊息時（離底部 > 48px）不強制拉回。
+- **踩過的坑**：問題與回答先以 `Date.now()` 產生的暫時 id 放進清單，串流文字靠 `answerId` 補進回答。
+  兩個 id 必須從**同一次** `Date.now()` 算出（`questionId` / `questionId + 1`）；
+  分兩次呼叫時只要跨過 1ms，問題的 id 會等於 `answerId`，回答會同時出現在問題框裡。
 
 Skills（`backend/skills/`，各含 `SKILL.md`）：`phrase-extraction`、`sentence-grading`、`dictation`。
 

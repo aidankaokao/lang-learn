@@ -110,10 +110,13 @@ export function FloatingChat() {
     setStatus(null);
     stickRef.current = true; // 自己剛發問，一定要看到回答
     // 問題與「空的回答」先放上去，串流進來的文字再一段段補進那則回答
-    const answerId = Date.now() + 1;
+    // 兩個 id 必須從同一個時間點算出來。之前分兩次呼叫 Date.now()，只要中間跨過 1ms，
+    // 問題的 id 就會剛好等於 answerId，串流的文字會同時補進問題與回答（畫面出現兩次回答）。
+    const questionId = Date.now();
+    const answerId = questionId + 1;
     setMessages((prev) => [
       ...prev,
-      { id: Date.now(), role: "user", content: asked, created_at: "" },
+      { id: questionId, role: "user", content: asked, created_at: "" },
       { id: answerId, role: "assistant", content: "", created_at: "", streaming: true },
     ]);
     setQuestion("");
